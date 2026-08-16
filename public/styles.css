@@ -345,6 +345,11 @@ main {
 .busy.none {
   color: var(--ink4);
 }
+/* 사람 차례. 화면을 스쳐 봐도 걸려야 한다. */
+.busy.turn {
+  color: var(--accent-text);
+  font-weight: 500;
+}
 
 /* 실패. 눈에 띄어야 하지만 카드를 잡아먹으면 안 된다. */
 .fails {

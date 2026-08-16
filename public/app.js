@@ -314,7 +314,13 @@ function renderCard(s) {
     b.append(el('span', 'elapsed mono', `${dur(now - s.busyWith.ts)}째`));
     card.append(b);
   } else {
-    card.append(el('div', 'busy none', '툴을 도는 중은 아니다. 다음 판단을 고르는 중이거나 사람을 기다린다.'));
+    // end_turn을 봤으면 사람 차례라고 단정할 수 있다. 아니면 다음 판단을
+    // 고르는 짧은 사이다. 뭉뚱그리면 기다려야 할지 말지를 알 수 없다.
+    card.append(
+      s.awaitingUser
+        ? el('div', 'busy turn', '사람 차례다. 에이전트가 답을 기다린다.')
+        : el('div', 'busy none', '툴을 도는 중은 아니다. 다음 판단을 고르는 중이다.')
+    );
   }
 
   // 토큰. 꼬리에 들어온 만큼이라 "언제부터"를 반드시 같이 적는다. 세션
@@ -428,6 +434,9 @@ async function toggleNotify() {
   }
   localStorage.setItem('caw-notify', notifyOn ? '1' : '0');
   updateNotifyButton();
+  if (notifyOn) {
+    notify('알림 켜짐', '작업이 끝나거나 막히면 이렇게 부른다.');
+  }
 }
 
 function notify(title, body) {
@@ -443,9 +452,9 @@ function notify(title, body) {
 function checkTransitions(data) {
   for (const s of data.sessions) {
     const was = prev.get(s.sessionId);
-    const busy = Boolean(s.busyWith);
     // 막힘으로 "들어선 순간"에만 부른다. 막힌 동안 4초마다 울리면 안 된다.
     const stuckSince = s.stuck ? s.stuck.since : 0;
+    const waiting = Boolean(s.awaitingUser);
     const name = `${s.project}${s.title ? ` › ${s.title}` : ''}`;
 
     if (primed && was) {
@@ -455,11 +464,11 @@ function checkTransitions(data) {
           `막힘 · ${name}`,
           `${s.stuck.tool ? s.stuck.tool + ': ' : ''}${s.stuck.message}`.slice(0, 180)
         );
-      } else if (was.busy && !busy && !s.live) {
-        notify(`차례 · ${name}`, s.lastNarration?.detail?.slice(0, 180) ?? '작업이 멈췄다.');
+      } else if (waiting && !was.waiting) {
+        notify(`차례 · ${name}`, s.lastNarration?.detail?.slice(0, 180) ?? '작업이 끝났다.');
       }
     }
-    prev.set(s.sessionId, { busy, stuckSince });
+    prev.set(s.sessionId, { waiting, stuckSince });
   }
   primed = true;
 }

@@ -133,6 +133,10 @@ function parseTranscript(text, agent) {
   let title = '';
   let lastPrompt = '';
   let gitBranch = '';
+  // 에이전트가 자기 차례를 끝냈는지. 마지막 assistant 메시지의 stop_reason이
+  // end_turn이면 사람 차례이고, tool_use면 도구 결과를 기다리는 중이다.
+  // 실측: 두 시간째 쉬는 세션은 end_turn, 도는 세션은 전부 tool_use였다.
+  let lastStopReason = '';
   // 토큰은 꼬리에 들어온 만큼만 센다. 전체를 세려면 수십 MB를 처음부터 읽어야
   // 하는데 그럴 값어치가 없다. 대신 언제부터 센 것인지(since)를 같이 돌려줘야
   // 화면에서 "최근 N시간" 이라고 정직하게 말할 수 있다.
@@ -152,6 +156,7 @@ function parseTranscript(text, agent) {
     if (o.gitBranch) gitBranch = o.gitBranch;
     // 제목과 마지막 요청은 별도 레코드로 온다. 대화가 이어질 때마다 새로
     // 쓰이므로 마지막 것이 현재 값이다.
+    if (o.type === 'assistant' && o.message?.stop_reason) lastStopReason = o.message.stop_reason;
     if (o.type === 'ai-title' && o.aiTitle) title = String(o.aiTitle);
     if (o.type === 'last-prompt' && o.lastPrompt) lastPrompt = String(o.lastPrompt);
 
@@ -224,7 +229,7 @@ function parseTranscript(text, agent) {
   const pendingTool =
     newestPending && Date.now() - newestPending.ts < MAX_TOOL_RUN_MS ? newestPending : null;
 
-  return { items, prompts, failures, usage, cwd, title, lastPrompt, gitBranch, pendingTool };
+  return { items, prompts, failures, usage, cwd, title, lastPrompt, gitBranch, lastStopReason, pendingTool };
 }
 
 // 메인 에이전트의 활동 구간.
@@ -540,6 +545,13 @@ export function getSessions() {
         // 도는 동안에는 트랜스크립트에 아무것도 안 쓰이기 때문이다(실측으로
         // 102초, 263초, 284초짜리 공백이 흔했다).
         live: busyWith !== null || now - effectiveLast < LIVE_MS,
+        // 사람 차례. 붙잡은 툴도 없고 도는 서브에이전트도 없으며, 메인이
+        // 자기 차례를 end_turn으로 닫았을 때다. live가 꺼지기를 기다리지
+        // 않으므로 90초 늦지 않는다.
+        awaitingUser:
+          busyWith === null &&
+          agents.liveAgents.length === 0 &&
+          parsed.lastStopReason === 'end_turn',
         agentCount: agents.agentCount,
         liveAgents: agents.liveAgents,
         // 시간축용. 메인은 요청 단위 구간, 서브에이전트는 파일 mtime 구간.
