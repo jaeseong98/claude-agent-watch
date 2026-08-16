@@ -80,13 +80,19 @@ export function getPlanProgress(projectRoot) {
       ? finished.reduce((a, t) => a + (t.reportAt - t.briefAt), 0) / finished.length
       : null;
 
+  const remaining = tasks.length - done;
   return {
     planFile: newest.f,
     tasks,
     done,
     total: tasks.length,
     avgMs,
-    etaMs: avgMs === null ? null : avgMs * (tasks.length - done),
+    // 남은 게 없으면 추정할 것도 없다. 0을 주면 화면에 "남은 0개 ≈ 0초"라는
+    // 빈 문구가 남는다.
+    etaMs: avgMs === null || remaining === 0 ? null : avgMs * remaining,
+    // 다 끝난 계획은 사라지지 않는다. 그 프로젝트의 현재 상태이기 때문이다.
+    // 대신 언제 끝났는지를 같이 줘서, 진행 중인 것처럼 보이지 않게 한다.
+    completedAt: remaining === 0 ? Math.max(...tasks.map((t) => t.reportAt ?? 0)) : null,
     staleCount,
   };
 }

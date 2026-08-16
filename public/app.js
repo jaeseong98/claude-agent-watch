@@ -47,10 +47,19 @@ function renderPlan(plan, sessionId) {
   const box = el('div', 'plan');
   const open = planOpen.has(sessionId);
 
+  // 다 끝난 계획은 사라지지 않는다. 그 프로젝트의 현재 상태이기 때문이다.
+  // 대신 진행 중인 것과 다르게 보여야 한다. 초록으로 꽉 찬 막대를 그대로 두면
+  // 아직 돌고 있는 것처럼 읽힌다.
+  const done = plan.completedAt !== null && plan.completedAt !== undefined;
+  if (done) box.classList.add('done');
+
   const head = el('div', 'plan-head');
   head.append(el('span', null, '계획'));
   head.append(el('span', 'count', `${plan.done}/${plan.total}`));
-  if (plan.etaMs !== null) {
+  if (done) {
+    head.append(el('span', 'plan-done', '완료'));
+    if (plan.completedAt) head.append(el('span', null, `${ago(plan.completedAt)}`));
+  } else if (plan.etaMs !== null) {
     head.append(el('span', null, `평균 ${dur(plan.avgMs)} · 남은 ${plan.total - plan.done}개 ≈ ${dur(plan.etaMs)}`));
   }
   head.append(el('span', 'file mono', plan.planFile));
