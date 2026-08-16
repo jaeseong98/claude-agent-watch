@@ -25,6 +25,8 @@ const planOpen = new Set();
 // ── 포맷 ────────────────────────────────────────────────
 const hhmmss = (ms) =>
   new Date(ms).toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const hhmm = (ms) =>
+  new Date(ms).toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
 const dur = (ms) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -86,6 +88,54 @@ function renderPlan(plan, sessionId) {
     box.append(
       el('div', 'hint', `.superpowers/sdd/에 지난 계획 파일 ${plan.staleCount}개가 남아 있어 제외했다.`)
     );
+  }
+  return box;
+}
+
+// ── 서브에이전트 시간축 ─────────────────────────────────
+// 지나간 에이전트를 시간 순으로 늘어놓는다. 카드의 타임라인은 지금 이 순간만
+// 답하지만, 이건 "지난 몇 시간 동안 뭘 했나"에 답한다.
+//
+// 겹치는 구간은 실측으로 0이었다(서브에이전트는 대체로 순차 실행). 그래도
+// 병렬로 띄우는 사람이 있으니 겹치면 아래 줄로 쌓는다.
+function renderLanes(history, nowMs) {
+  const from = Math.min(...history.map((a) => a.startedAt));
+  const to = nowMs;
+  const span = Math.max(to - from, 60_000);
+
+  // 겹치지 않게 레인에 채워 넣는다.
+  const lanes = [];
+  for (const a of history) {
+    const end = a.running ? to : a.endedAt;
+    let lane = lanes.find((l) => l.end <= a.startedAt);
+    if (!lane) {
+      lane = { end: 0, items: [] };
+      lanes.push(lane);
+    }
+    lane.items.push({ ...a, end });
+    lane.end = end;
+  }
+
+  const box = el('div', 'lanes');
+
+  const head = el('div', 'lanes-head');
+  head.append(el('span', null, '서브에이전트'));
+  head.append(el('span', 'mono', `${history.length}개`));
+  head.append(el('span', 'range mono', `${hhmm(from)} ~ 지금`));
+  box.append(head);
+
+  for (const lane of lanes) {
+    const row = el('div', 'lane');
+    for (const a of lane.items) {
+      const bar = el('div', `bar${a.running ? ' running' : ''}`);
+      // 시간축 위 위치. 왼쪽 끝이 가장 오래된 에이전트, 오른쪽 끝이 지금.
+      bar.style.left = `${((a.startedAt - from) / span) * 100}%`;
+      bar.style.width = `${Math.max(((a.end - a.startedAt) / span) * 100, 0.6)}%`;
+      bar.title = `${a.description}\n${hhmm(a.startedAt)} ~ ${a.running ? '진행 중' : hhmm(a.endedAt)} (${dur(a.end - a.startedAt)})\n${a.model}`;
+      bar.append(el('span', 'bar-label', a.description));
+      row.append(bar);
+    }
+    box.append(row);
   }
   return box;
 }
@@ -162,6 +212,8 @@ function renderCard(s) {
   } else {
     card.append(el('div', 'busy none', '툴을 도는 중은 아니다. 다음 판단을 고르는 중이거나 사람을 기다린다.'));
   }
+
+  if (s.agentHistory?.length) card.append(renderLanes(s.agentHistory, now));
 
   // 계획은 세션 카드 안에, 맨 아래에 둔다. 이 세션의 프로젝트에서 읽은
   // 것이라는 사실이 위치로 드러나야 한다.

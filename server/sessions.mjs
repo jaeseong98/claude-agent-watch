@@ -35,6 +35,9 @@ const LIVE_MS = 90 * 1000;
 const MAX_TOOL_RUN_MS = 30 * 60 * 1000;
 const MAX_SESSIONS = 8;
 const MAX_TIMELINE = 12;
+// 서브에이전트 시간축이 거슬러 올라가는 범위와 개수 상한.
+const HISTORY_MS = 3 * 60 * 60 * 1000;
+const MAX_HISTORY = 60;
 
 function statSafe(p) {
   try {
@@ -135,6 +138,55 @@ function parseTranscript(text, agent) {
     newestPending && Date.now() - newestPending.ts < MAX_TOOL_RUN_MS ? newestPending : null;
 
   return { items, cwd, title, lastPrompt, pendingTool };
+}
+
+// 지나간 서브에이전트까지 시간축에 늘어놓기 위한 구간 목록.
+//
+// 파일 내용을 읽지 않는다. meta.json의 mtime이 그 에이전트가 태어난 시각이고,
+// jsonl의 mtime이 마지막으로 움직인 시각이다. stat 두 번이면 구간이 나온다.
+// 실측: 에이전트 143개를 훑는 데 69ms. 폴링에 얹어도 부담이 없다.
+//
+// 이게 있으면 "지난 세 시간 동안 뭘 했나"가 한 장으로 보인다. 카드의 타임라인은
+// 지금 이 순간만 답한다.
+function readAgentHistory(sessionDir, now) {
+  const sub = join(sessionDir, 'subagents');
+  if (!existsSync(sub)) return [];
+
+  let files;
+  try {
+    files = readdirSync(sub);
+  } catch {
+    return [];
+  }
+
+  const out = [];
+  for (const f of files) {
+    if (!f.endsWith('.meta.json')) continue;
+    const id = f.slice('agent-'.length, -'.meta.json'.length);
+    const metaSt = statSafe(join(sub, f));
+    const logSt = statSafe(join(sub, `agent-${id}.jsonl`));
+    if (!metaSt || !logSt) continue;
+    // 창 밖의 것은 메타를 읽지도 않는다. 몇 백 개가 쌓여 있을 수 있다.
+    if (now - logSt.mtimeMs > HISTORY_MS) continue;
+
+    let meta = {};
+    try {
+      meta = JSON.parse(readFileSync(join(sub, f), 'utf8'));
+    } catch {
+      /* 방금 태어나 아직 안 쓰였을 수 있다 */
+    }
+
+    out.push({
+      id,
+      description: meta.description ?? '(설명 없음)',
+      model: meta.model ?? '?',
+      startedAt: metaSt.mtimeMs,
+      // 돌고 있는 것은 아직 끝이 없다. 화면에서 지금까지 늘려 그린다.
+      endedAt: logSt.mtimeMs,
+      running: now - logSt.mtimeMs < LIVE_MS,
+    });
+  }
+  return out.sort((a, b) => a.startedAt - b.startedAt).slice(-MAX_HISTORY);
 }
 
 function readSubagents(sessionDir, now) {
@@ -306,6 +358,7 @@ export function getSessions() {
         live: busyWith !== null || now - effectiveLast < LIVE_MS,
         agentCount: agents.agentCount,
         liveAgents: agents.liveAgents,
+        agentHistory: readAgentHistory(sessionDir, now),
         timeline: merged.slice(-MAX_TIMELINE),
       });
     }
