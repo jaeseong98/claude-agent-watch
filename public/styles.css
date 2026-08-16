@@ -666,3 +666,81 @@ main {
     transform: none;
   }
 }
+
+/* ── 좁은 폭: 바탕화면 옆에 세워 두는 위젯 ────────────────
+ * 브라우저 창을 화면 오른쪽에 붙여 두고 쓰는 경우다. 폭이 좁아지면 넓은
+ * 화면용 배치가 무너지므로 밀도를 다시 잡는다.
+ *
+ * 시간축의 이름 칸을 없애고 레인 위에 이름을 얹는다. 210px짜리 고정 칸을
+ * 두면 정작 막대가 그려질 자리가 안 남는다. */
+@media (max-width: 720px) {
+  main {
+    padding: 10px 12px 24px;
+  }
+  header {
+    gap: 8px;
+    padding: 0 12px;
+    height: 46px;
+  }
+  header h1 {
+    font-size: 13px;
+  }
+  /* 좁은 곳에서 "연결됨" 글자는 자리만 먹는다. 점만 남긴다. */
+  #conn-text {
+    display: none;
+  }
+
+  .timeline {
+    padding: 8px 10px;
+    margin-bottom: 12px;
+  }
+  .tl-head .hint {
+    display: none;
+  }
+  .tl-session {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .tl-label {
+    padding-top: 0;
+  }
+
+  .cards {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .card {
+    padding: 10px 11px;
+    gap: 6px;
+    border-radius: 12px;
+  }
+  /* 제목이 길면 프로젝트 이름까지 밀어낸다. 줄을 바꿔 둘 다 보이게 한다. */
+  .card-head {
+    flex-wrap: wrap;
+  }
+  .card-head .title {
+    font-size: 12px;
+  }
+  .status {
+    margin-left: auto;
+  }
+  .say {
+    font-size: 12px;
+  }
+  .say.clamped {
+    -webkit-line-clamp: 4;
+  }
+  /* 토큰은 좁은 곳에서 가장 덜 급한 정보다. */
+  .usage {
+    display: none;
+  }
+  .plan-head {
+    flex-wrap: wrap;
+  }
+  .plan-head .file {
+    display: none;
+  }
+  .section-title .hint {
+    display: none;
+  }
+}

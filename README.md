@@ -201,6 +201,31 @@ as a lifetime total would be worse than showing nothing.
 No dollar figure is shown. Prices change and most people here are on a subscription, so
 tokens are the honest unit.
 
+## Desktop widget (Windows)
+
+Park it down the edge of your screen instead of leaving a browser tab open:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File widget.ps1
+powershell -ExecutionPolicy Bypass -File widget.ps1 -Width 520 -Side left -OnTop
+```
+
+It starts the server if needed, then opens Chrome (or Edge) in app mode — no tabs, no
+address bar — snapped to the screen edge at full height, in its own browser profile so it
+doesn't mix with your normal windows. `-OnTop` keeps it above everything.
+
+Under 720px wide the layout compacts itself: the timeline drops its label column, cards go
+single-file, and token counts hide.
+
+**This is a window, not a desktop-embedded widget.** It won't sit behind other windows on
+top of the wallpaper — for that you'd need something like Rainmeter driving the same
+`/api/sessions` endpoint. Wrapping the page in Electron or Tauri would give a nicer frame,
+but it would also add `node_modules` and a build step, and then "clone it and run node" is
+no longer true.
+
+On macOS and Linux, just open `http://127.0.0.1:4317` in any browser window and size it
+however you like — the compact layout kicks in the same way.
+
 ## Configuration
 
 | Env var | Default | |

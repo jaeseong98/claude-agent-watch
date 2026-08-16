@@ -1,0 +1,116 @@
+﻿# 바탕화면 옆에 세워 두는 위젯 창.
+#
+# 서버를 띄우고, 크롬을 앱 모드(주소창·탭 없음)로 열어 화면 오른쪽 끝에 붙인다.
+# 새로 설치할 것이 없다. Electron이나 Tauri로 감싸면 창은 더 예뻐지지만
+# node_modules와 빌드 단계가 생기고, 그러면 "받아서 node 한 줄"이라는 이 도구의
+# 성격이 사라진다.
+#
+#   powershell -ExecutionPolicy Bypass -File widget.ps1
+#   powershell -ExecutionPolicy Bypass -File widget.ps1 -Width 520 -OnTop
+#
+# -OnTop을 주면 다른 창 위에 항상 뜬다. 안 주면 평범한 창이다.
+#
+# 참고: 이건 '창'이지 바탕화면에 박히는 위젯이 아니다. 벽지 위·다른 창 아래에
+# 진짜로 얹으려면 Rainmeter 같은 도구가 필요하다. README에 적어 두었다.
+
+param(
+  [int]$Port = 4317,
+  [int]$Width = 460,
+  [switch]$OnTop,
+  [ValidateSet('right', 'left')][string]$Side = 'right'
+)
+
+$ErrorActionPreference = 'Stop'
+$root = $PSScriptRoot
+
+# ── 서버 ──────────────────────────────────────────────────
+$listening = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+if ($listening) {
+  Write-Host "서버가 이미 $Port 에서 돌고 있다."
+} else {
+  $node = (Get-Command node -ErrorAction SilentlyContinue).Source
+  if (-not $node) { throw "node를 찾지 못했다. Node 18 이상이 필요하다." }
+  $env:PORT = "$Port"
+  Start-Process -FilePath $node -ArgumentList 'server/index.mjs' `
+    -WorkingDirectory $root -WindowStyle Hidden `
+    -RedirectStandardOutput "$root\out.log" -RedirectStandardError "$root\err.log"
+
+  $ok = $false
+  foreach ($i in 1..40) {
+    try { Invoke-WebRequest "http://127.0.0.1:$Port/api/sessions" -UseBasicParsing -TimeoutSec 3 | Out-Null; $ok = $true; break }
+    catch { Start-Sleep -Milliseconds 400 }
+  }
+  if (-not $ok) { Get-Content "$root\err.log" -Tail 20; throw "서버가 안 떴다." }
+  Write-Host "서버 기동: http://127.0.0.1:$Port"
+}
+
+# ── 창 위치 ───────────────────────────────────────────────
+Add-Type -AssemblyName System.Windows.Forms
+$screen = [System.Windows.Forms.Screen]::AllScreens | Where-Object { $_.Primary } | Select-Object -First 1
+if (-not $screen) { $screen = [System.Windows.Forms.Screen]::AllScreens[0] }
+$area = $screen.WorkingArea
+
+$x = if ($Side -eq 'right') { $area.X + $area.Width - $Width } else { $area.X }
+$y = $area.Y
+$h = $area.Height
+
+# ── 크롬 ──────────────────────────────────────────────────
+$chrome = @(
+  "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+  "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+  "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe",
+  "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+  "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if (-not $chrome) {
+  Write-Host "크롬이나 엣지를 못 찾았다. 브라우저에서 직접 열어라: http://127.0.0.1:$Port"
+  exit 0
+}
+
+# 프로필을 따로 둔다. 평소 쓰는 크롬 창들과 섞이면 위젯 창만 골라 닫기가
+# 번거롭고, 확장 프로그램이 알림 권한을 건드릴 수도 있다.
+$profile = Join-Path $env:LOCALAPPDATA 'claude-agent-watch\browser-profile'
+New-Item -ItemType Directory -Force -Path $profile | Out-Null
+
+$args = @(
+  "--app=http://127.0.0.1:$Port",
+  "--user-data-dir=$profile",
+  "--window-position=$x,$y",
+  "--window-size=$Width,$h",
+  '--no-first-run',
+  '--no-default-browser-check'
+)
+$proc = Start-Process -FilePath $chrome -ArgumentList $args -PassThru
+Write-Host "위젯 창 열림 ($Side, 폭 $Width)"
+
+# ── 항상 위 ───────────────────────────────────────────────
+if ($OnTop) {
+  Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class W {
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+}
+"@
+  # 창이 만들어질 때까지 잠깐 기다린다. 바로 잡으면 핸들이 아직 없다.
+  $hwnd = [IntPtr]::Zero
+  foreach ($i in 1..30) {
+    Start-Sleep -Milliseconds 300
+    $p = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+    if ($p -and $p.MainWindowHandle -ne 0) { $hwnd = $p.MainWindowHandle; break }
+    # 크롬은 기존 프로세스로 창을 넘기기도 한다. 제목으로도 찾아본다.
+    # 창 제목은 HTML의 <title>이다(화면의 h1이 아니라).
+    $byTitle = Get-Process chrome, msedge -ErrorAction SilentlyContinue |
+      Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like 'claude-agent-watch*' } |
+      Select-Object -First 1
+    if ($byTitle) { $hwnd = $byTitle.MainWindowHandle; break }
+  }
+  if ($hwnd -ne [IntPtr]::Zero) {
+    # HWND_TOPMOST = -1, SWP_NOMOVE|SWP_NOSIZE = 0x0003
+    [W]::SetWindowPos($hwnd, [IntPtr](-1), 0, 0, 0, 0, 0x0003) | Out-Null
+    Write-Host "항상 위로 고정됨"
+  } else {
+    Write-Host "창 핸들을 못 찾아 항상 위 설정을 건너뛴다."
+  }
+}
