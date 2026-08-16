@@ -1,127 +1,184 @@
 # claude-agent-watch
 
-Claude Code 세션과 서브에이전트가 **지금 무엇을 하고 있는지** 한 화면에 띄웁니다.
+**See what every Claude Code session and subagent is doing right now.**
+One shared timeline, across every window and every project.
 
-의존성 없음. 빌드 없음. 훅 설치 없음.
+No hooks. No build step. No dependencies. One command.
 
 ```bash
-git clone https://github.com/<you>/claude-agent-watch
+git clone https://github.com/USER/claude-agent-watch
 cd claude-agent-watch
 node server/index.mjs
-# http://127.0.0.1:4317
+# → http://127.0.0.1:4317
 ```
 
-Node 18 이상이면 됩니다. `npm install`은 필요 없습니다.
+Node 18+. There is no `npm install`.
 
 ---
 
-## 무엇을 해결하나
+## The problem
 
-서브에이전트에게 일을 시켜 놓으면 몇 시간이 지나도 **뭘 했고 뭐가 남았는지** 알 수 없습니다.
-터미널에는 툴 호출만 흘러가고, 창을 여러 개 띄우면 어느 창이 무슨 일을 하는 중인지조차 헷갈립니다.
+You hand a task to Claude Code, it spawns subagents, and three hours later you still
+cannot answer two simple questions:
 
-이 도구는 한 화면에 이렇게 보여줍니다.
+- **What has it actually done?**
+- **Is it still working, or did it stall?**
+
+The terminal shows a river of tool calls. Open two or three windows and you cannot even
+tell which one is doing what.
+
+## What you get
 
 ```
-● 투자에이전트  › 규칙 엔진 구현                              실행 중
-  요청  Task 7 변화 게이트 제거 다시 해줘
+전체 활동                                              12:28 ~ now
+        13:00      13:30      14:00      14:30      15:00
+─────────────────────────────────────────────────────────────────
+● toss-agent   ▐ add rule engine ▌▐ redo the change gate ▌▐ ... ▌
+  › rule engine  ▐Impl 6▌▐Review 6▌▐Fix▌▐ Implement Task 7 ▶▶▶ ▌
 
-  ▸ Implement Task 7                        sonnet · 12툴 · 3분
+● fogmap       ▐ just do it ▌▐ ok go ahead ▌
+  › 3d flythrough
+```
 
-  리뷰가 Critical 하나를 찾았습니다. 정제 순서 때문에
-  "이유 없는 조용한 차단"이 다른 경로로 되살아났습니다.
-  14:52:31                                          전체 보기
+Two kinds of bar share one axis:
 
-  Bash  python -m pytest tests/ -q                      2분째
+| Bar | Means | Label is |
+|---|---|---|
+| **Blue** | A turn: one thing *you* asked for | what you typed |
+| **Grey** | One subagent, start to finish | the agent's description |
+| **Green** | Running right now | grows toward the right edge |
 
-  계획  6/11  평균 21분 · 남은 5개 ≈ 1시간 43분
+Below the timeline, one card per live session:
+
+```
+● toss-agent › rule engine                             running
+  ASK   redo the change gate removal, forget the theme stuff
+
+  ▸ Implement Task 7: remove change gate    sonnet · 52 tools · 18m
+
+  The review found one Critical. Because of the ordering, a silent
+  block with no reason came back through another path.
+  15:08:15                                           show all
+
+  Bash  python -m pytest tests/ -q                          2m
+
+  PLAN  6/11   avg 21m · 5 left ≈ 1h 43m      [show tasks]
   ██████░░░░░
-  ▸ 7. 변화 게이트 제거                                  2분째
+  ▸ 7. remove change gate                                  17m
 ```
-
-- **무엇을 시켰나** (`요청`)
-- **에이전트가 한 말** — 툴 명령줄이 아니라 사람이 읽을 수 있는 상황 설명
-- **지금 붙잡고 있는 툴과 경과 시간** — 멈춘 건지 도는 건지 구분됩니다
-- **계획 진행률** — 쓰는 경우에만 (아래 참고)
 
 ---
 
-## 훅을 쓰지 않는 이유
+## Why no hooks
 
-Claude Code의 훅으로 이벤트를 받는 방식에는 구멍이 둘 있습니다.
+Claude Code can push events to you through hooks. That approach has two holes:
 
-1. 훅은 **세션 시작 시점에 읽힙니다.** 이미 돌고 있는 창은 재시작 전까지 아무것도 보내지 않습니다.
-2. 훅은 **프로젝트별** `.claude/settings.json`에 달립니다. 다른 프로젝트에서 띄운 창은 거기에도 설치해야 보입니다.
+1. **Hooks are read when a session starts.** A window that is already running sends
+   nothing until you restart it — and restarting kills the work you were watching.
+2. **Hooks are per project**, configured in `.claude/settings.json`. A window open on a
+   different repo stays invisible until you install them there too.
 
-그래서 "지금 두 창에서 뭔가 돌고 있는데 대시보드는 비어 있다"가 됩니다.
+Together that produces the exact failure you were trying to avoid: two windows busy,
+dashboard empty.
 
-이 도구는 반대로 갑니다. Claude Code가 **이미 디스크에 쓰고 있는** 트랜스크립트를 읽습니다.
-설치도 재시작도 필요 없고, 이미 지나간 것까지 보입니다. 대신 훅만큼 즉각적이지는 않습니다(4초 폴링).
+This tool reads what Claude Code **already writes to disk**. Nothing to install, nothing
+to restart, and history that predates the tool is visible immediately. The cost is that
+it polls (4s) instead of streaming.
 
-읽는 파일:
+It only ever **reads**. It writes nothing and sends nothing anywhere.
 
 ```
-~/.claude/projects/<slug>/<session>.jsonl                    메인 루프
-~/.claude/projects/<slug>/<session>/subagents/*.jsonl        서브에이전트
-~/.claude/projects/<slug>/<session>/subagents/*.meta.json    설명·모델
+~/.claude/projects/<slug>/<session>.jsonl                   main loop
+~/.claude/projects/<slug>/<session>/subagents/*.jsonl        subagents
+~/.claude/projects/<slug>/<session>/subagents/*.meta.json    description, model
 ```
-
-**읽기만 합니다.** 아무것도 쓰지 않고, 아무 데도 보내지 않습니다.
 
 ---
 
-## "실행 중" 판정
+## How "running" is decided
 
-단순히 "마지막 기록으로부터 N초"로 재면 틀립니다.
-긴 Bash 하나(빌드, lint, 전체 테스트)가 도는 동안에는 트랜스크립트에 **아무것도 쓰이지 않기** 때문입니다.
-실측으로 102초, 263초, 284초짜리 공백이 흔했고, 그때마다 멀쩡히 일하는 창이 "멈춤"으로 보였습니다.
+The obvious rule — *last write was under N seconds ago* — is wrong.
 
-그래서 이렇게 판정합니다.
+While a single long `Bash` runs (a build, a lint, a full test suite) **nothing at all is
+written to the transcript**. Measured gaps of 102s, 263s and 284s were routine, and every
+one of them made a perfectly busy window look dead.
 
-- **호출은 기록됐는데 결과가 아직 안 온 툴이 있으면** → 경과 시간과 무관하게 실행 중
-- 그게 아닐 때만 최근성(90초)으로 판단
+So:
+
+- **A tool call was issued and no result has come back** → running, no matter how long
+- Otherwise, fall back to recency (90s)
+
+## How the timeline is built
+
+Subagents record their own boundaries, for free:
+
+| File | mtime is |
+|---|---|
+| `agent-<id>.meta.json` | when the subagent was spawned |
+| `agent-<id>.jsonl` | when it last did anything |
+
+Two `stat` calls give you a bar. No file contents are read. Measured: **143 subagents in
+69 ms**, cheap enough to poll.
+
+The main loop has no such boundaries, so the timeline uses **your prompts** instead. One
+request, to the moment before the next request, is one bar — labelled with what you typed.
+That is why the timeline reads as *"what I asked for, and how long it took"*.
 
 ---
 
-## 계획 진행률 (선택)
+## Plan progress (optional)
 
-[superpowers](https://github.com/obra/superpowers) SDD 워크플로의 파일 규약을 쓰면
-세션 카드 안에 진행률이 함께 나옵니다.
+If you use the [superpowers](https://github.com/obra/superpowers) SDD file convention,
+each session card also shows plan progress and an estimate.
 
 ```
-<프로젝트>/docs/superpowers/plans/<최근>.md   에서 `## Task N: 제목`
-<프로젝트>/.superpowers/sdd/task-N-brief.md   태스크 시작
-<프로젝트>/.superpowers/sdd/task-N-report.md  태스크 완료
+<project>/docs/superpowers/plans/<newest>.md   →  `## Task N: title`
+<project>/.superpowers/sdd/task-N-brief.md     →  task started
+<project>/.superpowers/sdd/task-N-report.md    →  task finished
 ```
 
-완료된 태스크의 소요 시간에서 평균을 내어 남은 시간을 어림합니다(표본이 2개 미만이면 추정하지 않습니다).
+The estimate averages finished tasks (and refuses to guess from fewer than two samples).
 
-**이 규약을 쓰지 않으면 그 부분만 조용히 빠집니다.** 도구를 쓰기 위해 규약을 따라야 할 이유는 없습니다.
+**If you don't use that convention, this section simply doesn't appear.** You never have
+to adopt it to use the tool.
 
-프로젝트 경로는 각 세션의 `cwd`에서 읽으므로, 창마다 다른 프로젝트를 열어 두어도 각자 자기 계획을 보여줍니다.
+The project root comes from each session's own `cwd`, so windows on different repos each
+show their own plan. When several windows share a repo, only the one actually running
+tasks gets the progress bar — otherwise the same numbers show up on unrelated cards and
+you cannot tell whose they are.
 
 ---
 
-## 설정
+## Configuration
 
-| 환경변수 | 기본값 | 설명 |
+| Env var | Default | |
 |---|---|---|
 | `PORT` | `4317` | |
-| `HOST` | `127.0.0.1` | 다른 기기에서 보려면 `0.0.0.0`. 인증이 없으니 신뢰된 네트워크에서만 쓰세요 |
+| `HOST` | `127.0.0.1` | Set `0.0.0.0` to reach it from another machine. There is **no auth** — trusted networks only. |
+
+## Layout
+
+```
+server/index.mjs      HTTP + static files, no dependencies
+server/sessions.mjs   transcript parsing, liveness, timeline
+server/plan.mjs       optional SDD plan progress
+public/index.html
+public/app.js         rendering, no framework
+public/styles.css     light + dark, derived tokens
+```
 
 ---
 
-## 알아둘 것
+## Known limits
 
-- **최근 12시간** 안에 활동한 세션만, 최대 8개까지 보여줍니다.
-- 대화 트랜스크립트는 수십 MB까지 자랍니다(실측 37MB). 통째로 읽지 않고 **꼬리 256KB**만 읽습니다.
-  그래서 아주 오래 조용했던 세션은 제목이나 마지막 요청이 비어 보일 수 있습니다.
-- 화면 문구는 한국어입니다. 영어 버전이 필요하면 이슈를 남겨 주세요.
-- Claude Code의 트랜스크립트 형식은 공개 API가 아닙니다. 버전이 바뀌면 깨질 수 있습니다.
-  현재 확인된 동작 버전: **Claude Code 2.1.x**
+- Sessions active in the last **12 hours**, up to **8**; timeline reaches back **3 hours**.
+- Transcripts grow to tens of MB (37 MB and 83 MB in testing). Only the **last 4 MB** of
+  each is parsed, cached by size and mtime so idle sessions cost nothing. A session that
+  has been quiet for a very long time may show an empty title or request.
+- **The UI is in Korean.** If you want English, open an issue — the strings are in two files.
+- Claude Code's transcript format is not a public API. A future version may break this.
+  Verified against **Claude Code 2.1.x**.
 
----
-
-## 라이선스
+## License
 
 MIT
