@@ -371,6 +371,11 @@ main {
   white-space: nowrap;
   color: var(--ink4);
 }
+.plan-toggle {
+  margin-left: auto;
+  flex: none;
+  white-space: nowrap;
+}
 .bars {
   display: flex;
   gap: 2px;

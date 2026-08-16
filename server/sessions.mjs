@@ -184,6 +184,45 @@ function readSubagents(sessionDir, now) {
   return { agentCount: files.length, liveAgents, items, pending };
 }
 
+// 이 세션이 계획을 실제로 돌리고 있는가.
+//
+// 같은 프로젝트에 창을 여러 개 띄우면 cwd가 같아 계획이 전부에 붙는다.
+// 실측으로 투자에이전트 창 셋에 같은 6/11이 걸렸는데, 그중 태스크를 돌리는
+// 것은 하나였고 나머지 둘은 다른 일(도구 만들기, 가사 쓰기)을 하고 있었다.
+// 무관한 카드에 진행률이 붙으면 그게 누구 것인지 되레 알 수 없어진다.
+function looksLikePlanWork(timeline, liveAgents) {
+  // 서브에이전트 이름이 태스크를 가리키면 확실하다("Implement Task 7: ...").
+  if (liveAgents.some((a) => /task\s*\d+/i.test(a.description))) return true;
+  // 아니면 SDD 파일을 직접 만졌는지 본다.
+  return timeline.some(
+    (i) => i.kind === 'tool' && /[\\/]\.superpowers[\\/]|superpowers[\\/]plans[\\/]/i.test(i.detail)
+  );
+}
+
+// 같은 프로젝트의 세션 중 계획을 보여줄 하나를 고른다.
+// 돌리고 있는 창이 있으면 그것, 없으면 그 프로젝트에서 가장 최근 창.
+// 아무 데도 안 붙이면 "계획이 어떻게 돼 가지" 자체를 볼 수 없게 된다.
+function assignPlanOwner(sessions) {
+  const byProject = new Map();
+  for (const s of sessions) {
+    if (!s.plan || !s.cwd) continue;
+    // 같은 폴더인데 드라이브 문자의 대소문자가 창마다 다르게 기록된다
+    // (실측: 한 창은 `c:\...`, 다른 창은 `C:\...`). 문자열로 그냥 비교하면
+    // 같은 프로젝트가 둘로 갈려 양쪽 다 주인이 되어 버린다.
+    const key = s.cwd.toLowerCase().replace(/\//g, '\\');
+    if (!byProject.has(key)) byProject.set(key, []);
+    byProject.get(key).push(s);
+  }
+  for (const group of byProject.values()) {
+    const rank = (s) => (s.worksPlan ? 2 : 0) + (s.live ? 1 : 0);
+    const owner = group.reduce((best, s) =>
+      rank(s) > rank(best) || (rank(s) === rank(best) && s.lastAt > best.lastAt) ? s : best
+    );
+    for (const s of group) if (s !== owner) s.plan = null;
+  }
+  for (const s of sessions) delete s.worksPlan;
+}
+
 export function getSessions() {
   const now = Date.now();
   const found = [];
@@ -255,7 +294,11 @@ export function getSessions() {
         busyWith,
         // 계획은 세션의 cwd에서 읽는다. 창마다 다른 프로젝트일 수 있으므로
         // 하나의 전역 경로를 두면 어느 세션 것인지 알 수 없게 된다.
+        //
+        // 다만 cwd가 같은 창을 여러 개 띄우면 전부에 같은 계획이 붙는다.
+        // 실제로 그 계획을 돌리는 건 보통 하나뿐이므로 아래에서 주인을 가린다.
         plan: getPlanProgress(parsed.cwd),
+        worksPlan: looksLikePlanWork(merged, agents.liveAgents),
         lastAt: effectiveLast,
         // 툴을 붙잡고 있으면 경과 시간과 무관하게 실행 중이다. 긴 Bash 한 방이
         // 도는 동안에는 트랜스크립트에 아무것도 안 쓰이기 때문이다(실측으로
@@ -270,5 +313,7 @@ export function getSessions() {
 
   // 돌고 있는 것을 먼저, 그 안에서 최근 순. 화면 위쪽이 지금 봐야 할 것이라야 한다.
   found.sort((a, b) => Number(b.live) - Number(a.live) || b.lastAt - a.lastAt);
-  return { now, sessions: found.slice(0, MAX_SESSIONS) };
+  const sessions = found.slice(0, MAX_SESSIONS);
+  assignPlanOwner(sessions);
+  return { now, sessions };
 }

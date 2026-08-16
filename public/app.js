@@ -19,6 +19,8 @@ let now = Date.now();
 // 어느 카드를 펼쳐 두었는지. 다시 그려도 유지돼야 한다. 4초마다 접히면
 // 긴 멘트를 끝까지 읽을 수가 없다.
 const expanded = new Set();
+// 계획의 태스크 목록을 펼쳐 두었는지. 멘트 펼침과 따로 관리한다.
+const planOpen = new Set();
 
 // ── 포맷 ────────────────────────────────────────────────
 const hhmmss = (ms) =>
@@ -33,17 +35,25 @@ const dur = (ms) => {
 const ago = (at) => `${dur(now - at)} 전`;
 
 // ── 계획 진행률 ─────────────────────────────────────────
-function renderPlan(plan) {
+function renderPlan(plan, sessionId) {
   const box = el('div', 'plan');
+  const open = planOpen.has(sessionId);
 
   const head = el('div', 'plan-head');
   head.append(el('span', null, '계획'));
-  const count = el('span', 'count', `${plan.done}/${plan.total}`);
-  head.append(count);
+  head.append(el('span', 'count', `${plan.done}/${plan.total}`));
   if (plan.etaMs !== null) {
     head.append(el('span', null, `평균 ${dur(plan.avgMs)} · 남은 ${plan.total - plan.done}개 ≈ ${dur(plan.etaMs)}`));
   }
   head.append(el('span', 'file mono', plan.planFile));
+
+  const toggle = el('button', 'more plan-toggle', open ? '접기' : '태스크 보기');
+  toggle.addEventListener('click', () => {
+    if (open) planOpen.delete(sessionId);
+    else planOpen.add(sessionId);
+    render(lastData);
+  });
+  head.append(toggle);
   box.append(head);
 
   const bars = el('div', 'bars');
@@ -54,21 +64,28 @@ function renderPlan(plan) {
   }
   box.append(bars);
 
-  // 진행 중이거나 방금 끝난 것만 펼쳐 둔다. 11개를 다 늘어놓으면 카드가
-  // 계획표가 되어 정작 지금 무슨 일이 벌어지는지가 밀려난다.
-  const running = plan.tasks.filter((t) => t.status === 'running');
-  const nextUp = plan.tasks.find((t) => t.status === 'todo');
-  const show = [...running, ...(nextUp ? [nextUp] : [])].slice(0, 3);
-  if (show.length) {
+  // 접었을 때는 진행 중인 것만, 펼치면 전부. 11개를 늘 늘어놓으면 카드가
+  // 계획표가 되어 정작 지금 벌어지는 일이 밀려난다.
+  const shown = open ? plan.tasks : plan.tasks.filter((t) => t.status === 'running');
+  if (shown.length) {
     const list = el('div', 'tasks');
-    for (const t of show) {
+    for (const t of shown) {
       const row = el('div', `task ${t.status}`);
-      row.append(el('span', 'mark', t.status === 'running' ? '▸' : '·'));
+      row.append(el('span', 'mark', t.status === 'done' ? '✓' : t.status === 'running' ? '▸' : '·'));
       row.append(el('span', 'label', `${t.n}. ${t.title}`));
-      if (t.status === 'running' && t.briefAt) row.append(el('span', 'dur mono', `${dur(now - t.briefAt)}째`));
+      if (t.status === 'done' && t.briefAt && t.reportAt) {
+        row.append(el('span', 'dur mono', dur(t.reportAt - t.briefAt)));
+      } else if (t.status === 'running' && t.briefAt) {
+        row.append(el('span', 'dur mono', `${dur(now - t.briefAt)}째`));
+      }
       list.append(row);
     }
     box.append(list);
+  }
+  if (open && plan.staleCount) {
+    box.append(
+      el('div', 'hint', `.superpowers/sdd/에 지난 계획 파일 ${plan.staleCount}개가 남아 있어 제외했다.`)
+    );
   }
   return box;
 }
@@ -148,7 +165,7 @@ function renderCard(s) {
 
   // 계획은 세션 카드 안에, 맨 아래에 둔다. 이 세션의 프로젝트에서 읽은
   // 것이라는 사실이 위치로 드러나야 한다.
-  if (s.plan) card.append(renderPlan(s.plan));
+  if (s.plan) card.append(renderPlan(s.plan, s.sessionId));
 
   return card;
 }
