@@ -100,7 +100,7 @@ $profile = Join-Path $env:LOCALAPPDATA 'claude-agent-watch\browser-profile'
 New-Item -ItemType Directory -Force -Path $profile | Out-Null
 
 $args = @(
-  "--app=http://127.0.0.1:$Port",
+  "--app=http://127.0.0.1:$Port/?widget=1",
   "--user-data-dir=$profile",
   "--window-position=$x,$y",
   "--window-size=$Width,$h",

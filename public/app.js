@@ -490,6 +490,41 @@ async function tick() {
   render(lastData);
 }
 
+// ── 모습 (웹 / 위젯) ────────────────────────────────────
+// 위젯 창은 ?widget=1 로 열린다. 그래야 화면이 자기가 어느 모습인지 알고,
+// 넓은 창에서도 좁은 배치를 쓸 수 있다. 폭만으로 정하면 모드 전환이 불가능하다.
+const isWidget = new URLSearchParams(location.search).get('widget') === '1';
+const narrow = matchMedia('(max-width: 720px)');
+
+function applyMode() {
+  document.documentElement.classList.toggle('compact', isWidget || narrow.matches);
+  const b = $('mode-btn');
+  b.textContent = isWidget ? '🖥' : '🪟';
+  b.title = isWidget ? '브라우저 탭으로 열기' : '화면 가장자리 위젯으로 열기';
+}
+narrow.addEventListener('change', applyMode);
+
+async function switchMode() {
+  const mode = isWidget ? 'web' : 'widget';
+  const b = $('mode-btn');
+  b.disabled = true;
+  try {
+    const res = await fetch(`./api/open?mode=${mode}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? String(res.status));
+    // 위젯에서 웹으로 넘어갈 때는 이 창을 닫아 준다. 둘이 동시에 떠 있으면
+    // 어느 쪽을 보고 있는지 헷갈린다. 앱 모드 창은 스크립트로 닫을 수 있다.
+    if (isWidget) setTimeout(() => window.close(), 600);
+  } catch (err) {
+    alert(`창을 열지 못했다: ${err.message}`);
+  } finally {
+    b.disabled = false;
+  }
+}
+
+$('mode-btn').addEventListener('click', switchMode);
+applyMode();
+
 // ── 테마 ────────────────────────────────────────────────
 const applyTheme = (t) => {
   document.documentElement.dataset.theme = t;

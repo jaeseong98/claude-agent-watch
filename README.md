@@ -224,8 +224,15 @@ doesn't mix with your normal windows. `-OnTop` keeps it above everything.
 Clicking again never opens a second window: if one is already up, it is brought to the
 front instead.
 
-Under 720px wide the layout compacts itself: the timeline drops its label column, cards go
-single-file, and token counts hide.
+**Switch either way with the 🪟 / 🖥 button in the header.** From the widget it opens the
+page in your normal browser and closes itself; from the browser it launches the widget.
+The endpoint that opens windows only answers requests from this machine, and only while
+the server is bound to loopback.
+
+The compact layout follows the *mode*, not just the width: the widget window carries
+`?widget=1`, so it stays compact even if you stretch it. Under 720px anything compacts
+anyway. Compact drops the timeline's label column, stacks cards single-file, and hides
+token counts.
 
 **This is a window, not a desktop-embedded widget.** It won't sit behind other windows on
 top of the wallpaper — for that you'd need something like Rainmeter driving the same
