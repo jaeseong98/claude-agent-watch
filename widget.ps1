@@ -23,6 +23,32 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win {
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+}
+"@
+
+function Find-WidgetWindow {
+  # 창 제목은 HTML의 <title>이다(화면의 h1이 아니라).
+  Get-Process chrome, msedge -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like 'claude-agent-watch*' } |
+    Select-Object -First 1
+}
+
+# 버튼을 다시 눌렀을 때 창이 하나 더 생기면 안 된다. 있으면 앞으로 꺼낸다.
+$existing = Find-WidgetWindow
+if ($existing) {
+  [Win]::ShowWindow($existing.MainWindowHandle, 9) | Out-Null   # SW_RESTORE
+  [Win]::SetForegroundWindow($existing.MainWindowHandle) | Out-Null
+  Write-Host "이미 열려 있는 창을 앞으로 꺼냈다."
+  exit 0
+}
+
 # ── 서버 ──────────────────────────────────────────────────
 $listening = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($listening) {
@@ -86,29 +112,16 @@ Write-Host "위젯 창 열림 ($Side, 폭 $Width)"
 
 # ── 항상 위 ───────────────────────────────────────────────
 if ($OnTop) {
-  Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class W {
-  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-}
-"@
   # 창이 만들어질 때까지 잠깐 기다린다. 바로 잡으면 핸들이 아직 없다.
   $hwnd = [IntPtr]::Zero
   foreach ($i in 1..30) {
     Start-Sleep -Milliseconds 300
-    $p = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
-    if ($p -and $p.MainWindowHandle -ne 0) { $hwnd = $p.MainWindowHandle; break }
-    # 크롬은 기존 프로세스로 창을 넘기기도 한다. 제목으로도 찾아본다.
-    # 창 제목은 HTML의 <title>이다(화면의 h1이 아니라).
-    $byTitle = Get-Process chrome, msedge -ErrorAction SilentlyContinue |
-      Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like 'claude-agent-watch*' } |
-      Select-Object -First 1
-    if ($byTitle) { $hwnd = $byTitle.MainWindowHandle; break }
+    $w = Find-WidgetWindow
+    if ($w) { $hwnd = $w.MainWindowHandle; break }
   }
   if ($hwnd -ne [IntPtr]::Zero) {
     # HWND_TOPMOST = -1, SWP_NOMOVE|SWP_NOSIZE = 0x0003
-    [W]::SetWindowPos($hwnd, [IntPtr](-1), 0, 0, 0, 0, 0x0003) | Out-Null
+    [Win]::SetWindowPos($hwnd, [IntPtr](-1), 0, 0, 0, 0, 0x0003) | Out-Null
     Write-Host "항상 위로 고정됨"
   } else {
     Write-Host "창 핸들을 못 찾아 항상 위 설정을 건너뛴다."

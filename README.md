@@ -206,13 +206,23 @@ tokens are the honest unit.
 Park it down the edge of your screen instead of leaving a browser tab open:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File widget.ps1
+# one-click: makes a desktop shortcut, then just click it
+powershell -ExecutionPolicy Bypass -File install-shortcut.ps1
+
+# or run it directly
+.\widget.cmd
 powershell -ExecutionPolicy Bypass -File widget.ps1 -Width 520 -Side left -OnTop
 ```
+
+`install-shortcut.ps1` adds a desktop icon that launches with no console window. Add
+`-Startup` to also launch it at login, and `-Remove` to take both away.
 
 It starts the server if needed, then opens Chrome (or Edge) in app mode — no tabs, no
 address bar — snapped to the screen edge at full height, in its own browser profile so it
 doesn't mix with your normal windows. `-OnTop` keeps it above everything.
+
+Clicking again never opens a second window: if one is already up, it is brought to the
+front instead.
 
 Under 720px wide the layout compacts itself: the timeline drops its label column, cards go
 single-file, and token counts hide.
