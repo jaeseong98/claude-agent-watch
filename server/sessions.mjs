@@ -22,10 +22,12 @@ import { getPlanProgress } from './plan.mjs';
 
 const PROJECTS_ROOT = join(homedir(), '.claude', 'projects');
 
-// 메인 트랜스크립트는 수십 MB까지 자란다(실측 37MB). 폴링마다 통째로 읽으면
-// 서버가 디스크에 묶인다. 꼬리만 읽고 첫 줄(잘렸을 수 있다)은 버린다.
-// 바이트 경계에서 잘린 UTF-8 문자도 이 규칙으로 함께 사라진다.
-const TAIL_BYTES = 256 * 1024;
+// 얼마나 거슬러 읽나.
+//
+// 처음에는 256KB만 읽었는데, 바쁜 세션에서는 그게 겨우 1분치였다(실측:
+// 36MB 파일에서 256KB = 1분, 83MB 파일에서 256KB = 0분). 시간축을 그리려면
+// 턱없이 모자란다. 4MB로 올리면 800~900분이 덮이고 읽기는 12ms다.
+const TAIL_BYTES = 4 * 1024 * 1024;
 // 이보다 오래 조용한 세션은 목록에 넣지 않는다. 몇 달치가 쌓여 있다.
 const ACTIVE_WINDOW_MS = 12 * 60 * 60 * 1000;
 // 툴을 붙잡고 있지 않을 때, 이 안에 기록이 있으면 아직 살아 있다고 본다.
@@ -35,9 +37,9 @@ const LIVE_MS = 90 * 1000;
 const MAX_TOOL_RUN_MS = 30 * 60 * 1000;
 const MAX_SESSIONS = 8;
 const MAX_TIMELINE = 12;
-// 서브에이전트 시간축이 거슬러 올라가는 범위와 개수 상한.
+// 시간축이 거슬러 올라가는 범위.
 const HISTORY_MS = 3 * 60 * 60 * 1000;
-const MAX_HISTORY = 60;
+const MAX_HISTORY = 80;
 
 function statSafe(p) {
   try {
@@ -47,21 +49,39 @@ function statSafe(p) {
   }
 }
 
-function readTail(file, bytes = TAIL_BYTES) {
+// 4MB를 매 폴링마다 다시 읽고 파싱하면 낭비다. 파일이 안 바뀌었으면
+// (크기와 mtime이 같으면) 지난 결과를 그대로 쓴다. 쉬고 있는 세션은
+// 공짜가 되고, 살아 있는 것만 다시 읽는다.
+const cache = new Map();
+
+function parseCached(file, agent) {
   const st = statSafe(file);
-  if (!st) return '';
-  const start = Math.max(0, st.size - bytes);
+  if (!st) return null;
+  const hit = cache.get(file);
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.parsed;
+
+  const start = Math.max(0, st.size - TAIL_BYTES);
   const len = st.size - start;
-  if (len <= 0) return '';
-  const buf = Buffer.alloc(len);
-  const fd = openSync(file, 'r');
-  try {
-    readSync(fd, buf, 0, len, start);
-  } finally {
-    closeSync(fd);
+  let text = '';
+  if (len > 0) {
+    const buf = Buffer.alloc(len);
+    const fd = openSync(file, 'r');
+    try {
+      readSync(fd, buf, 0, len, start);
+    } finally {
+      closeSync(fd);
+    }
+    text = buf.toString('utf8');
+    // 파일 처음부터 읽은 게 아니면 첫 줄은 잘렸다고 봐야 한다. 바이트
+    // 경계에서 잘린 UTF-8 문자도 이 규칙으로 함께 사라진다.
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
   }
-  const text = buf.toString('utf8');
-  return start > 0 ? text.slice(text.indexOf('\n') + 1) : text;
+
+  const parsed = parseTranscript(text, agent);
+  cache.set(file, { size: st.size, mtimeMs: st.mtimeMs, parsed });
+  // 캐시가 무한정 자라지 않게 한다. 세션은 많아야 수십 개다.
+  if (cache.size > 64) cache.delete(cache.keys().next().value);
+  return parsed;
 }
 
 function toolDetail(block) {
@@ -77,13 +97,38 @@ function toolDetail(block) {
   return s.slice(0, 200);
 }
 
-// 한 트랜스크립트(메인이든 서브에이전트든)의 꼬리를 훑는다.
+// 사람이 친 말처럼 보이지만 시스템이 끼워 넣은 것들. 구간으로 세면 시간축에
+// 0분짜리 조각이 끼어 실제로 시킨 일을 가린다.
+const SYSTEM_PROMPTS = [
+  /^\[Request interrupted/i,
+  /^This session is being continued from a previous conversation/i,
+  /^Caveat: The messages below were generated/i,
+  /^<[a-z-]+>/i,
+];
+
+// 사람이 실제로 친 말인지. 도구 결과도 type이 user로 들어오므로 걸러야 한다.
+function userPromptText(o) {
+  if (o.type !== 'user' || o.toolUseResult) return null;
+  const c = o.message?.content;
+  let text = '';
+  if (typeof c === 'string') text = c;
+  else if (Array.isArray(c)) {
+    const blocks = c.filter((b) => b.type === 'text' && typeof b.text === 'string');
+    if (!blocks.length) return null;
+    text = blocks.map((b) => b.text).join(' ');
+  }
+  text = text.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  if (SYSTEM_PROMPTS.some((re) => re.test(text))) return null;
+  return text;
+}
+
 function parseTranscript(text, agent) {
   const items = [];
+  const prompts = [];
   let cwd = '';
   let title = '';
   let lastPrompt = '';
-  // 호출된 툴과 돌아온 결과를 짝지어 미완료를 남긴다.
   const issued = new Map();
   const returned = new Set();
 
@@ -103,6 +148,11 @@ function parseTranscript(text, agent) {
 
     const ts = Date.parse(o.timestamp ?? '');
     if (Number.isNaN(ts)) continue;
+
+    // 사람이 새로 시킨 지점. 메인 에이전트의 활동 구간을 가르는 경계다.
+    const prompt = userPromptText(o);
+    if (prompt) prompts.push({ ts, text: prompt.slice(0, 300) });
+
     const content = o.message?.content;
     if (!Array.isArray(content)) continue;
 
@@ -137,17 +187,44 @@ function parseTranscript(text, agent) {
   const pendingTool =
     newestPending && Date.now() - newestPending.ts < MAX_TOOL_RUN_MS ? newestPending : null;
 
-  return { items, cwd, title, lastPrompt, pendingTool };
+  return { items, prompts, cwd, title, lastPrompt, pendingTool };
+}
+
+// 메인 에이전트의 활동 구간.
+//
+// 서브에이전트는 시작과 끝이 파일로 남지만 메인 루프는 그렇지 않다. 대신
+// 사람이 새로 시킨 지점이 경계가 된다. 요청 하나에서 다음 요청 직전까지가
+// 한 구간이고, 그 구간의 이름은 그때 시킨 말이다. 그러면 시간축이
+// "무엇을 시켰고 얼마나 걸렸나"를 그대로 보여준다.
+function buildTurns(prompts, items, now) {
+  if (!prompts.length) return [];
+  const acts = items.map((i) => i.ts).sort((a, b) => a - b);
+  const turns = [];
+
+  for (let i = 0; i < prompts.length; i++) {
+    const start = prompts[i].ts;
+    const nextPrompt = prompts[i + 1]?.ts ?? Infinity;
+    // 이 구간 안에서 마지막으로 움직인 시각.
+    let last = start;
+    for (const t of acts) {
+      if (t >= start && t < nextPrompt && t > last) last = t;
+    }
+    if (now - last > HISTORY_MS) continue;
+    turns.push({
+      startedAt: start,
+      endedAt: last,
+      text: prompts[i].text,
+      running: nextPrompt === Infinity && now - last < LIVE_MS,
+    });
+  }
+  return turns.slice(-MAX_HISTORY);
 }
 
 // 지나간 서브에이전트까지 시간축에 늘어놓기 위한 구간 목록.
 //
 // 파일 내용을 읽지 않는다. meta.json의 mtime이 그 에이전트가 태어난 시각이고,
 // jsonl의 mtime이 마지막으로 움직인 시각이다. stat 두 번이면 구간이 나온다.
-// 실측: 에이전트 143개를 훑는 데 69ms. 폴링에 얹어도 부담이 없다.
-//
-// 이게 있으면 "지난 세 시간 동안 뭘 했나"가 한 장으로 보인다. 카드의 타임라인은
-// 지금 이 순간만 답한다.
+// 실측: 에이전트 143개를 훑는 데 69ms.
 function readAgentHistory(sessionDir, now) {
   const sub = join(sessionDir, 'subagents');
   if (!existsSync(sub)) return [];
@@ -181,7 +258,6 @@ function readAgentHistory(sessionDir, now) {
       description: meta.description ?? '(설명 없음)',
       model: meta.model ?? '?',
       startedAt: metaSt.mtimeMs,
-      // 돌고 있는 것은 아직 끝이 없다. 화면에서 지금까지 늘려 그린다.
       endedAt: logSt.mtimeMs,
       running: now - logSt.mtimeMs < LIVE_MS,
     });
@@ -214,7 +290,8 @@ function readSubagents(sessionDir, now) {
       /* 메타가 아직 안 쓰였을 수 있다 */
     }
 
-    const parsed = parseTranscript(readTail(full), meta.description ?? id.slice(0, 8));
+    const parsed = parseCached(full, meta.description ?? id.slice(0, 8));
+    if (!parsed) continue;
     const busy = parsed.pendingTool !== null;
     if (!busy && now - st.mtimeMs > LIVE_MS) continue;
     if (parsed.pendingTool && (!pending || parsed.pendingTool.ts > pending.ts)) {
@@ -239,21 +316,17 @@ function readSubagents(sessionDir, now) {
 // 이 세션이 계획을 실제로 돌리고 있는가.
 //
 // 같은 프로젝트에 창을 여러 개 띄우면 cwd가 같아 계획이 전부에 붙는다.
-// 실측으로 투자에이전트 창 셋에 같은 6/11이 걸렸는데, 그중 태스크를 돌리는
-// 것은 하나였고 나머지 둘은 다른 일(도구 만들기, 가사 쓰기)을 하고 있었다.
-// 무관한 카드에 진행률이 붙으면 그게 누구 것인지 되레 알 수 없어진다.
+// 실측으로 창 셋에 같은 6/11이 걸렸는데, 그중 태스크를 돌리는 것은 하나였고
+// 나머지 둘은 다른 일을 하고 있었다. 무관한 카드에 진행률이 붙으면 그게
+// 누구 것인지 되레 알 수 없어진다.
 function looksLikePlanWork(timeline, liveAgents) {
-  // 서브에이전트 이름이 태스크를 가리키면 확실하다("Implement Task 7: ...").
   if (liveAgents.some((a) => /task\s*\d+/i.test(a.description))) return true;
-  // 아니면 SDD 파일을 직접 만졌는지 본다.
   return timeline.some(
     (i) => i.kind === 'tool' && /[\\/]\.superpowers[\\/]|superpowers[\\/]plans[\\/]/i.test(i.detail)
   );
 }
 
 // 같은 프로젝트의 세션 중 계획을 보여줄 하나를 고른다.
-// 돌리고 있는 창이 있으면 그것, 없으면 그 프로젝트에서 가장 최근 창.
-// 아무 데도 안 붙이면 "계획이 어떻게 돼 가지" 자체를 볼 수 없게 된다.
 function assignPlanOwner(sessions) {
   const byProject = new Map();
   for (const s of sessions) {
@@ -283,7 +356,7 @@ export function getSessions() {
   try {
     slugs = readdirSync(PROJECTS_ROOT);
   } catch {
-    return { now, sessions: [], error: `Claude Code 기록을 못 찾았다: ${PROJECTS_ROOT}` };
+    return { now, windowMs: HISTORY_MS, sessions: [], error: `Claude Code 기록을 못 찾았다: ${PROJECTS_ROOT}` };
   }
 
   for (const slug of slugs) {
@@ -311,15 +384,8 @@ export function getSessions() {
       const lastAt = Math.max(st.mtimeMs, subMtime);
       if (now - lastAt > ACTIVE_WINDOW_MS) continue;
 
-      let parsed = parseTranscript(readTail(transcript));
-      // 제목·마지막 요청은 꼬리 안에 대개 들어 있지만, 마지막 대화 뒤에 도구
-      // 호출이 길게 이어지면 창 밖으로 밀려난다. 그때만 더 크게 읽는다.
-      if ((!parsed.title || !parsed.lastPrompt) && st.size > TAIL_BYTES) {
-        const wider = parseTranscript(readTail(transcript, TAIL_BYTES * 8));
-        parsed.title = parsed.title || wider.title;
-        parsed.lastPrompt = parsed.lastPrompt || wider.lastPrompt;
-      }
-
+      const parsed = parseCached(transcript);
+      if (!parsed) continue;
       const agents = readSubagents(sessionDir, now);
 
       const merged = [...parsed.items, ...agents.items].sort((a, b) => a.ts - b.ts);
@@ -344,11 +410,6 @@ export function getSessions() {
         lastPrompt: parsed.lastPrompt,
         lastNarration: narrations[narrations.length - 1] ?? null,
         busyWith,
-        // 계획은 세션의 cwd에서 읽는다. 창마다 다른 프로젝트일 수 있으므로
-        // 하나의 전역 경로를 두면 어느 세션 것인지 알 수 없게 된다.
-        //
-        // 다만 cwd가 같은 창을 여러 개 띄우면 전부에 같은 계획이 붙는다.
-        // 실제로 그 계획을 돌리는 건 보통 하나뿐이므로 아래에서 주인을 가린다.
         plan: getPlanProgress(parsed.cwd),
         worksPlan: looksLikePlanWork(merged, agents.liveAgents),
         lastAt: effectiveLast,
@@ -358,6 +419,8 @@ export function getSessions() {
         live: busyWith !== null || now - effectiveLast < LIVE_MS,
         agentCount: agents.agentCount,
         liveAgents: agents.liveAgents,
+        // 시간축용. 메인은 요청 단위 구간, 서브에이전트는 파일 mtime 구간.
+        turns: buildTurns(parsed.prompts, parsed.items, now),
         agentHistory: readAgentHistory(sessionDir, now),
         timeline: merged.slice(-MAX_TIMELINE),
       });
@@ -368,5 +431,5 @@ export function getSessions() {
   found.sort((a, b) => Number(b.live) - Number(a.live) || b.lastAt - a.lastAt);
   const sessions = found.slice(0, MAX_SESSIONS);
   assignPlanOwner(sessions);
-  return { now, sessions };
+  return { now, windowMs: HISTORY_MS, sessions };
 }

@@ -92,50 +92,124 @@ function renderPlan(plan, sessionId) {
   return box;
 }
 
-// ── 서브에이전트 시간축 ─────────────────────────────────
-// 지나간 에이전트를 시간 순으로 늘어놓는다. 카드의 타임라인은 지금 이 순간만
-// 답하지만, 이건 "지난 몇 시간 동안 뭘 했나"에 답한다.
+// ── 통합 시간축 ─────────────────────────────────────────
+// 모든 세션의 모든 에이전트를 하나의 시간축에 늘어놓는다.
 //
-// 겹치는 구간은 실측으로 0이었다(서브에이전트는 대체로 순차 실행). 그래도
-// 병렬로 띄우는 사람이 있으니 겹치면 아래 줄로 쌓는다.
-function renderLanes(history, nowMs) {
-  const from = Math.min(...history.map((a) => a.startedAt));
-  const to = nowMs;
-  const span = Math.max(to - from, 60_000);
-
-  // 겹치지 않게 레인에 채워 넣는다.
+// 카드마다 따로 두면 축이 카드마다 달라져 서로 비교가 안 된다. 창 셋이
+// 동시에 돌 때 알고 싶은 것은 "누가 언제 무엇을 했나"이고, 그건 축이
+// 하나여야 보인다.
+//
+// 줄 두 종류가 섞인다.
+//   메인   사람이 시킨 것 하나가 구간 하나. 이름은 그때 시킨 말이다.
+//   서브   서브에이전트 하나가 구간 하나. 이름은 그 에이전트의 설명이다.
+function packLanes(items) {
+  // 겹치면 아래 줄로 쌓는다. 서브에이전트는 실측상 순차라 대개 한 줄이지만
+  // 병렬로 띄우는 사람도 있다.
   const lanes = [];
-  for (const a of history) {
-    const end = a.running ? to : a.endedAt;
-    let lane = lanes.find((l) => l.end <= a.startedAt);
+  for (const it of items) {
+    let lane = lanes.find((l) => l.end <= it.startedAt);
     if (!lane) {
       lane = { end: 0, items: [] };
       lanes.push(lane);
     }
-    lane.items.push({ ...a, end });
-    lane.end = end;
+    lane.items.push(it);
+    lane.end = it.end;
   }
+  return lanes;
+}
 
-  const box = el('div', 'lanes');
+function renderTimeline(data) {
+  const now = data.now;
+  const rows = [];
 
-  const head = el('div', 'lanes-head');
-  head.append(el('span', null, '서브에이전트'));
-  head.append(el('span', 'mono', `${history.length}개`));
-  head.append(el('span', 'range mono', `${hhmm(from)} ~ 지금`));
+  for (const s of data.sessions) {
+    const main = (s.turns ?? []).map((t) => ({
+      startedAt: t.startedAt,
+      end: t.running ? now : t.endedAt,
+      endedAt: t.endedAt,
+      label: t.text,
+      running: t.running,
+      kind: 'main',
+    }));
+    const subs = (s.agentHistory ?? []).map((a) => ({
+      startedAt: a.startedAt,
+      end: a.running ? now : a.endedAt,
+      endedAt: a.endedAt,
+      label: a.description,
+      running: a.running,
+      kind: 'sub',
+      model: a.model,
+    }));
+    if (!main.length && !subs.length) continue;
+    rows.push({ session: s, main, subs });
+  }
+  if (!rows.length) return null;
+
+  // 축은 모두가 공유한다. 가장 이른 활동부터 지금까지.
+  const all = rows.flatMap((r) => [...r.main, ...r.subs]);
+  const from = Math.min(...all.map((a) => a.startedAt));
+  const to = now;
+  const span = Math.max(to - from, 60_000);
+  const pct = (t) => ((t - from) / span) * 100;
+
+  const box = el('section', 'timeline');
+
+  const head = el('div', 'tl-head');
+  head.append(el('span', 'tl-title', '전체 활동'));
+  head.append(el('span', 'hint', '메인은 요청 하나가 구간 하나, 서브는 에이전트 하나가 구간 하나'));
+  head.append(el('span', 'tl-range mono', `${hhmm(from)} ~ 지금`));
   box.append(head);
 
-  for (const lane of lanes) {
-    const row = el('div', 'lane');
-    for (const a of lane.items) {
-      const bar = el('div', `bar${a.running ? ' running' : ''}`);
-      // 시간축 위 위치. 왼쪽 끝이 가장 오래된 에이전트, 오른쪽 끝이 지금.
-      bar.style.left = `${((a.startedAt - from) / span) * 100}%`;
-      bar.style.width = `${Math.max(((a.end - a.startedAt) / span) * 100, 0.6)}%`;
-      bar.title = `${a.description}\n${hhmm(a.startedAt)} ~ ${a.running ? '진행 중' : hhmm(a.endedAt)} (${dur(a.end - a.startedAt)})\n${a.model}`;
-      bar.append(el('span', 'bar-label', a.description));
-      row.append(bar);
+  // 눈금. 30분마다, 정각에 맞춰 찍는다.
+  const axis = el('div', 'tl-axis');
+  const step = span > 4 * 3600e3 ? 3600e3 : 1800e3;
+  const first = Math.ceil(from / step) * step;
+  for (let t = first; t <= to; t += step) {
+    const tick = el('span', 'tick mono', hhmm(t));
+    tick.style.left = `${pct(t)}%`;
+    axis.append(tick);
+  }
+  box.append(axis);
+
+  for (const r of rows) {
+    const group = el('div', `tl-session${r.session.live ? ' live' : ''}`);
+
+    const label = el('div', 'tl-label');
+    label.append(el('span', `dot ${r.session.live ? 'on' : 'idle'}`));
+    label.append(el('span', 'project', r.session.project));
+    if (r.session.title) {
+      label.append(el('span', 'sep', '›'));
+      const t = el('span', 'title', r.session.title);
+      t.title = r.session.title;
+      label.append(t);
     }
-    box.append(row);
+    group.append(label);
+
+    const lanesBox = el('div', 'tl-lanes');
+    const groups = [
+      ['main', r.main],
+      ['sub', r.subs],
+    ];
+    for (const [kind, items] of groups) {
+      if (!items.length) continue;
+      for (const lane of packLanes(items)) {
+        const row = el('div', 'lane');
+        for (const a of lane.items) {
+          const bar = el('div', `bar ${kind}${a.running ? ' running' : ''}`);
+          bar.style.left = `${pct(a.startedAt)}%`;
+          bar.style.width = `${Math.max(pct(a.end) - pct(a.startedAt), 0.4)}%`;
+          bar.title =
+            `${kind === 'main' ? '요청' : '서브에이전트'}: ${a.label}\n` +
+            `${hhmm(a.startedAt)} ~ ${a.running ? '진행 중' : hhmm(a.endedAt)} (${dur(a.end - a.startedAt)})` +
+            (a.model ? `\n${a.model}` : '');
+          bar.append(el('span', 'bar-label', a.label));
+          row.append(bar);
+        }
+        lanesBox.append(row);
+      }
+    }
+    group.append(lanesBox);
+    box.append(group);
   }
   return box;
 }
@@ -213,8 +287,6 @@ function renderCard(s) {
     card.append(el('div', 'busy none', '툴을 도는 중은 아니다. 다음 판단을 고르는 중이거나 사람을 기다린다.'));
   }
 
-  if (s.agentHistory?.length) card.append(renderLanes(s.agentHistory, now));
-
   // 계획은 세션 카드 안에, 맨 아래에 둔다. 이 세션의 프로젝트에서 읽은
   // 것이라는 사실이 위치로 드러나야 한다.
   if (s.plan) card.append(renderPlan(s.plan, s.sessionId));
@@ -229,6 +301,12 @@ function render(data) {
   now = data.now ?? Date.now();
   const live = data.sessions.filter((s) => s.live);
   const idle = data.sessions.filter((s) => !s.live);
+
+  // 통합 시간축은 헤더 바로 밑. 세션별 카드보다 먼저 온다.
+  const tlBox = $('timeline');
+  tlBox.replaceChildren();
+  const tl = renderTimeline(data);
+  if (tl) tlBox.append(tl);
 
   const liveBox = $('live');
   liveBox.replaceChildren();
