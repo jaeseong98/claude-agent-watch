@@ -51,7 +51,7 @@ Two kinds of bar share one axis:
 Below the timeline, one card per live session:
 
 ```
-● toss-agent › rule engine                             running
+● toss-agent › rule engine          [rule-engine]     running
   ASK   redo the change gate removal, forget the theme stuff
 
   ▸ Implement Task 7: remove change gate    sonnet · 52 tools · 18m
@@ -60,12 +60,36 @@ Below the timeline, one card per live session:
   block with no reason came back through another path.
   15:08:15                                           show all
 
+  FAILED ×3   15:04:22  Bash
+  Exit code 2 ./.ruff_cache ./.venv/Lib/site-packages/ruff …
+
   Bash  python -m pytest tests/ -q                          2m
 
   PLAN  6/11   avg 21m · 5 left ≈ 1h 43m      [show tasks]
   ██████░░░░░
   ▸ 7. remove change gate                                  17m
+
+  TOKENS  out 720K   cache-read 150.3M         since 23:42
 ```
+
+---
+
+## It calls you, so you don't have to watch
+
+The point is not to give you another screen to stare at. Turn on 🔔 and the page
+notifies you at exactly two moments:
+
+| | When |
+|---|---|
+| **Your turn** | it was holding a tool, let go, and is now waiting on you |
+| **Blocked** | a new tool failure appeared |
+
+Nothing else fires. An alert that goes off constantly stops being a signal.
+
+Failures matter as much as completion: a session grinding on the same error for thirty
+minutes and a session making steady progress look **identical** otherwise. Blocked is
+checked before your-turn, because reporting a session that died on an error as "finished"
+would be a lie.
 
 ---
 
@@ -148,6 +172,17 @@ tasks gets the progress bar — otherwise the same numbers show up on unrelated 
 you cannot tell whose they are.
 
 ---
+
+## Tokens
+
+Each card shows output and cache-read tokens, with a **`since HH:MM`** label.
+
+That label is not decoration. Only the last 4 MB of each transcript is parsed, so the
+number is "what landed in the window", **not** a session total. Presenting a partial sum
+as a lifetime total would be worse than showing nothing.
+
+No dollar figure is shown. Prices change and most people here are on a subscription, so
+tokens are the honest unit.
 
 ## Configuration
 

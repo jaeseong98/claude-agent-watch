@@ -346,6 +346,71 @@ main {
   color: var(--ink4);
 }
 
+/* 실패. 눈에 띄어야 하지만 카드를 잡아먹으면 안 된다. */
+.fails {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+}
+.fail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--ink4);
+  margin-bottom: 3px;
+}
+.fail-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+.fail-msg {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink2);
+  word-break: break-word;
+}
+
+/* 토큰. 부차적인 정보라 작고 조용하게. */
+.usage {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+  color: var(--ink4);
+}
+.usage-tag {
+  color: var(--ink3);
+}
+.usage-since {
+  margin-left: auto;
+}
+
+/* 알림 버튼. 켜져 있으면 한눈에 보여야 한다. */
+#notify-btn.on {
+  background: color-mix(in srgb, var(--success) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+}
+
+/* 브랜치. 세션을 구분하는 데 제목만큼 쓸모가 있다. */
+.branch {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  color: var(--ink3);
+}
+
 /* ── 통합 시간축 ──────────────────────────────────────── */
 .timeline {
   margin-bottom: 18px;

@@ -40,6 +40,8 @@ const MAX_TIMELINE = 12;
 // 시간축이 거슬러 올라가는 범위.
 const HISTORY_MS = 3 * 60 * 60 * 1000;
 const MAX_HISTORY = 80;
+// 최근 실패는 몇 건까지 보낼지. 전부 보내면 화면이 오류 목록이 된다.
+const MAX_FAILURES = 5;
 
 function statSafe(p) {
   try {
@@ -126,9 +128,15 @@ function userPromptText(o) {
 function parseTranscript(text, agent) {
   const items = [];
   const prompts = [];
+  const failures = [];
   let cwd = '';
   let title = '';
   let lastPrompt = '';
+  let gitBranch = '';
+  // 토큰은 꼬리에 들어온 만큼만 센다. 전체를 세려면 수십 MB를 처음부터 읽어야
+  // 하는데 그럴 값어치가 없다. 대신 언제부터 센 것인지(since)를 같이 돌려줘야
+  // 화면에서 "최근 N시간" 이라고 정직하게 말할 수 있다.
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, since: 0 };
   const issued = new Map();
   const returned = new Set();
 
@@ -141,6 +149,7 @@ function parseTranscript(text, agent) {
       continue;
     }
     if (o.cwd) cwd = o.cwd;
+    if (o.gitBranch) gitBranch = o.gitBranch;
     // 제목과 마지막 요청은 별도 레코드로 온다. 대화가 이어질 때마다 새로
     // 쓰이므로 마지막 것이 현재 값이다.
     if (o.type === 'ai-title' && o.aiTitle) title = String(o.aiTitle);
@@ -148,6 +157,20 @@ function parseTranscript(text, agent) {
 
     const ts = Date.parse(o.timestamp ?? '');
     if (Number.isNaN(ts)) continue;
+    if (!usage.since || ts < usage.since) usage.since = ts;
+
+    const u = o.message?.usage;
+    if (u) {
+      usage.input += u.input_tokens ?? 0;
+      usage.output += u.output_tokens ?? 0;
+      usage.cacheRead += u.cache_read_input_tokens ?? 0;
+      usage.cacheWrite += u.cache_creation_input_tokens ?? 0;
+    }
+
+    // 사용자가 도중에 끊은 것. 실패는 아니지만 "왜 멈췄지"의 답이 된다.
+    if (o.toolUseResult && typeof o.toolUseResult === 'object' && o.toolUseResult.interrupted) {
+      failures.push({ ts, kind: 'interrupted', tool: '', detail: '', message: '사용자가 중단함', agent });
+    }
 
     // 사람이 새로 시킨 지점. 메인 에이전트의 활동 구간을 가르는 경계다.
     const prompt = userPromptText(o);
@@ -163,6 +186,20 @@ function parseTranscript(text, agent) {
         if (b.id) issued.set(b.id, { name: b.name, detail, ts });
       } else if (b.type === 'tool_result' && b.tool_use_id) {
         returned.add(b.tool_use_id);
+        // 실패한 도구 호출. 같은 오류로 30분째 헛도는 세션과 순조롭게
+        // 나아가는 세션이 화면에서 똑같이 보이면 안 된다.
+        if (b.is_error) {
+          const src = issued.get(b.tool_use_id);
+          const raw = typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? '');
+          failures.push({
+            ts,
+            kind: 'error',
+            tool: src?.name ?? '',
+            detail: src?.detail ?? '',
+            message: raw.replace(/<\/?tool_use_error>/g, '').replace(/\s+/g, ' ').trim().slice(0, 200),
+            agent,
+          });
+        }
       } else if (
         // 발화는 어시스턴트 것만 센다. 사용자 쪽 배열에도 text 블록이 오는데
         // (서브에이전트에 넘긴 지시문이 그렇다) 그것까지 "말"로 잡으면 방금
@@ -187,7 +224,7 @@ function parseTranscript(text, agent) {
   const pendingTool =
     newestPending && Date.now() - newestPending.ts < MAX_TOOL_RUN_MS ? newestPending : null;
 
-  return { items, prompts, cwd, title, lastPrompt, pendingTool };
+  return { items, prompts, failures, usage, cwd, title, lastPrompt, gitBranch, pendingTool };
 }
 
 // 메인 에이전트의 활동 구간.
@@ -267,11 +304,21 @@ function readAgentHistory(sessionDir, now) {
 
 function readSubagents(sessionDir, now) {
   const sub = join(sessionDir, 'subagents');
-  if (!existsSync(sub)) return { agentCount: 0, liveAgents: [], items: [], pending: null };
+  const EMPTY = {
+    agentCount: 0,
+    liveAgents: [],
+    items: [],
+    failures: [],
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    pending: null,
+  };
+  if (!existsSync(sub)) return EMPTY;
 
   const files = readdirSync(sub).filter((f) => f.endsWith('.jsonl'));
   const liveAgents = [];
   const items = [];
+  const failures = [];
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let pending = null;
 
   for (const f of files) {
@@ -308,9 +355,11 @@ function readSubagents(sessionDir, now) {
       toolCount: parsed.items.filter((i) => i.kind === 'tool').length,
     });
     items.push(...parsed.items);
+    failures.push(...parsed.failures);
+    for (const k of ['input', 'output', 'cacheRead', 'cacheWrite']) usage[k] += parsed.usage[k];
   }
 
-  return { agentCount: files.length, liveAgents, items, pending };
+  return { agentCount: files.length, liveAgents, items, failures, usage, pending };
 }
 
 // 이 세션이 계획을 실제로 돌리고 있는가.
@@ -407,9 +456,23 @@ export function getSessions() {
         cwd: parsed.cwd,
         project: parsed.cwd ? parsed.cwd.split(/[/\\]/).filter(Boolean).pop() ?? slug : slug,
         title: parsed.title,
+        gitBranch: parsed.gitBranch,
         lastPrompt: parsed.lastPrompt,
         lastNarration: narrations[narrations.length - 1] ?? null,
         busyWith,
+        // 최근 실패. 전부 주면 화면이 오류 목록이 되므로 마지막 몇 건만.
+        failures: [...parsed.failures, ...agents.failures]
+          .sort((a, b) => a.ts - b.ts)
+          .filter((f) => now - f.ts < HISTORY_MS)
+          .slice(-MAX_FAILURES),
+        // 꼬리에 들어온 만큼의 토큰. since가 언제부터인지 말해 준다.
+        usage: {
+          input: parsed.usage.input + agents.usage.input,
+          output: parsed.usage.output + agents.usage.output,
+          cacheRead: parsed.usage.cacheRead + agents.usage.cacheRead,
+          cacheWrite: parsed.usage.cacheWrite + agents.usage.cacheWrite,
+          since: parsed.usage.since,
+        },
         plan: getPlanProgress(parsed.cwd),
         worksPlan: looksLikePlanWork(merged, agents.liveAgents),
         lastAt: effectiveLast,

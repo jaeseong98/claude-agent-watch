@@ -35,6 +35,12 @@ const dur = (ms) => {
   return m < 60 ? `${m}분` : `${Math.floor(m / 60)}시간 ${m % 60}분`;
 };
 const ago = (at) => `${dur(now - at)} 전`;
+// 토큰은 자릿수가 커서(캐시 읽기가 1억을 넘는다) 그대로 쓰면 못 읽는다.
+const num = (n) => {
+  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}억`;
+  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}만`;
+  return n.toLocaleString('ko-KR');
+};
 
 // ── 계획 진행률 ─────────────────────────────────────────
 function renderPlan(plan, sessionId) {
@@ -227,6 +233,11 @@ function renderCard(s) {
     t.title = s.title;
     head.append(t);
   }
+  if (s.gitBranch) {
+    const b = el('span', 'branch mono', s.gitBranch);
+    b.title = `브랜치 ${s.gitBranch}`;
+    head.append(b);
+  }
   const status = el('span', `status ${s.live ? 'run' : 'idle'}`, s.live ? '실행 중' : ago(s.lastAt));
   head.append(status);
   card.append(head);
@@ -275,6 +286,20 @@ function renderCard(s) {
     card.append(foot);
   }
 
+  // 실패. 있으면 눈에 띄어야 한다. 같은 오류로 헛도는 세션과 순조로운
+  // 세션이 똑같이 보이면 화면을 보는 의미가 없다.
+  if (s.failures?.length) {
+    const box = el('div', 'fails');
+    const last = s.failures[s.failures.length - 1];
+    const head = el('div', 'fail-head');
+    head.append(el('span', 'fail-badge', s.failures.length > 1 ? `실패 ${s.failures.length}` : '실패'));
+    head.append(el('span', 'mono', hhmmss(last.ts)));
+    if (last.tool) head.append(el('span', 'mono', last.tool));
+    box.append(head);
+    box.append(el('div', 'fail-msg', last.message));
+    card.append(box);
+  }
+
   if (s.busyWith) {
     const b = el('div', 'busy');
     b.append(el('span', 'tool mono', s.busyWith.name));
@@ -285,6 +310,22 @@ function renderCard(s) {
     card.append(b);
   } else {
     card.append(el('div', 'busy none', '툴을 도는 중은 아니다. 다음 판단을 고르는 중이거나 사람을 기다린다.'));
+  }
+
+  // 토큰. 꼬리에 들어온 만큼이라 "언제부터"를 반드시 같이 적는다. 세션
+  // 전체 합계인 것처럼 보이면 거짓말이 된다.
+  if (s.usage && (s.usage.output || s.usage.cacheRead)) {
+    const u = el('div', 'usage mono');
+    u.append(el('span', 'usage-tag', '토큰'));
+    u.append(el('span', null, `출력 ${num(s.usage.output)}`));
+    u.append(el('span', null, `캐시읽기 ${num(s.usage.cacheRead)}`));
+    if (s.usage.cacheWrite) u.append(el('span', null, `캐시쓰기 ${num(s.usage.cacheWrite)}`));
+    u.append(el('span', 'usage-since', s.usage.since ? `${hhmm(s.usage.since)}부터` : ''));
+    u.title =
+      '트랜스크립트 꼬리 4MB에 들어온 만큼만 셌다. 세션 전체 합계가 아니다.\n' +
+      `입력 ${num(s.usage.input)} · 출력 ${num(s.usage.output)}\n` +
+      `캐시 읽기 ${num(s.usage.cacheRead)} · 캐시 쓰기 ${num(s.usage.cacheWrite)}`;
+    card.append(u);
   }
 
   // 계획은 세션 카드 안에, 맨 아래에 둔다. 이 세션의 프로젝트에서 읽은
@@ -340,11 +381,87 @@ function render(data) {
   }
 }
 
+// ── 알림 ────────────────────────────────────────────────
+// 이 도구의 원래 목적은 "지금 뭐 하는지 보는 것"이 아니라 "들여다보지 않아도
+// 되는 것"이다. 화면을 계속 봐야 한다면 절반만 푼 것이다.
+//
+// 두 순간에만 부른다. 그 외에는 조용해야 알림이 신호로 남는다.
+//   끝남   툴을 붙잡고 있다가 놓았고 사람 차례가 되었을 때
+//   막힘   새로운 실패가 났을 때
+const prev = new Map(); // sessionId -> { busy, lastFailTs }
+let notifyOn = localStorage.getItem('caw-notify') === '1';
+let primed = false; // 첫 응답으로는 안 부른다. 이미 쉬고 있던 것까지 다 울린다.
+
+function updateNotifyButton() {
+  const b = $('notify-btn');
+  const denied = typeof Notification !== 'undefined' && Notification.permission === 'denied';
+  b.textContent = notifyOn ? '🔔' : '🔕';
+  b.title = denied
+    ? '브라우저가 알림을 막고 있다. 주소창 왼쪽 자물쇠에서 허용해야 한다'
+    : notifyOn
+      ? '알림 켜짐. 작업이 끝나거나 막히면 부른다'
+      : '알림 꺼짐';
+  b.classList.toggle('on', notifyOn && !denied);
+}
+
+async function toggleNotify() {
+  if (!notifyOn) {
+    if (typeof Notification === 'undefined') {
+      alert('이 브라우저는 알림을 지원하지 않는다.');
+      return;
+    }
+    if (Notification.permission !== 'granted') {
+      const res = await Notification.requestPermission();
+      if (res !== 'granted') {
+        updateNotifyButton();
+        return;
+      }
+    }
+    notifyOn = true;
+  } else {
+    notifyOn = false;
+  }
+  localStorage.setItem('caw-notify', notifyOn ? '1' : '0');
+  updateNotifyButton();
+}
+
+function notify(title, body) {
+  if (!notifyOn || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  // tag를 세션별로 주면 같은 세션의 알림이 쌓이지 않고 갈아 끼워진다.
+  const n = new Notification(title, { body, tag: title, icon: undefined });
+  n.onclick = () => {
+    window.focus();
+    n.close();
+  };
+}
+
+function checkTransitions(data) {
+  for (const s of data.sessions) {
+    const was = prev.get(s.sessionId);
+    const busy = Boolean(s.busyWith);
+    const lastFailTs = s.failures?.length ? s.failures[s.failures.length - 1].ts : 0;
+    const name = `${s.project}${s.title ? ` › ${s.title}` : ''}`;
+
+    if (primed && was) {
+      // 막힘이 먼저다. 실패로 멈춘 것을 "끝났다"로 알리면 거짓말이 된다.
+      if (lastFailTs > was.lastFailTs) {
+        const f = s.failures[s.failures.length - 1];
+        notify(`막힘 · ${name}`, `${f.tool ? f.tool + ': ' : ''}${f.message}`.slice(0, 180));
+      } else if (was.busy && !busy && !s.live) {
+        notify(`차례 · ${name}`, s.lastNarration?.detail?.slice(0, 180) ?? '작업이 멈췄다.');
+      }
+    }
+    prev.set(s.sessionId, { busy, lastFailTs });
+  }
+  primed = true;
+}
+
 async function tick() {
   try {
     const res = await fetch('./api/sessions');
     if (!res.ok) throw new Error(String(res.status));
     lastData = await res.json();
+    checkTransitions(lastData);
     $('conn-dot').className = 'dot on';
     $('conn-text').textContent = '연결됨';
   } catch {
@@ -366,6 +483,9 @@ applyTheme(
   localStorage.getItem('caw-theme') ??
     (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
 );
+$('notify-btn').addEventListener('click', toggleNotify);
+updateNotifyButton();
+
 $('theme-btn').addEventListener('click', () =>
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark')
 );
