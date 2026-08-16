@@ -9,6 +9,9 @@ param(
   [switch]$OnTop,
   [int]$Width = 460,
   [ValidateSet('right', 'left')][string]$Side = 'right',
+  # 전역 단축키. 상주 프로그램이 필요 없다. 바로가기가 바탕화면이나 시작
+  # 메뉴에 있으면 Windows가 직접 처리한다. 끄려면 빈 문자열을 준다.
+  [string]$Hotkey = 'CTRL+ALT+W',
   [switch]$Remove
 )
 
@@ -43,6 +46,7 @@ function New-Shortcut($path) {
   $lnk.IconLocation = $icon
   $lnk.Description = 'Claude Code 세션 관측 위젯'
   $lnk.WindowStyle = 7   # 최소화로 시작. 콘솔이 뜰 일이 없다.
+  if ($Hotkey) { $lnk.Hotkey = $Hotkey }
   $lnk.Save()
   Write-Host "만듦: $path"
 }
@@ -53,3 +57,4 @@ if ($Startup) { New-Shortcut $startupLnk }
 Write-Host ''
 Write-Host '바탕화면의 "에이전트 관측"을 누르면 뜬다.'
 Write-Host '이미 떠 있으면 그 창을 앞으로 꺼낸다.'
+if ($Hotkey) { Write-Host "단축키: $Hotkey (어디서든 누르면 뜬다)" }

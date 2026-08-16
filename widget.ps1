@@ -33,11 +33,22 @@ public class Win {
 }
 "@
 
+# 위젯 창을 찾는다.
+#
+# 제목으로 찾으면 안 된다. 브라우저 탭에서 이 페이지를 열어 두면 그 창 제목도
+# 'claude-agent-watch - Chrome'이 되어, 웹에서 위젯으로 전환할 때 그 탭을
+# 위젯으로 착각하고 아무것도 안 열린다.
+#
+# 명령줄로 찾는다. 위젯 창만 --app= 과 전용 프로필을 함께 갖는다.
 function Find-WidgetWindow {
-  # 창 제목은 HTML의 <title>이다(화면의 h1이 아니라).
-  Get-Process chrome, msedge -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like 'claude-agent-watch*' } |
-    Select-Object -First 1
+  $profileMark = 'claude-agent-watchrowser-profile'
+  $procs = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.CommandLine -like "*$profileMark*" -and $_.CommandLine -like '*--app=*' }
+  foreach ($p in $procs) {
+    $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
+    if ($proc -and $proc.MainWindowHandle -ne 0) { return $proc }
+  }
+  return $null
 }
 
 # 버튼을 다시 눌렀을 때 창이 하나 더 생기면 안 된다. 있으면 앞으로 꺼낸다.

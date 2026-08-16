@@ -214,8 +214,11 @@ powershell -ExecutionPolicy Bypass -File install-shortcut.ps1
 powershell -ExecutionPolicy Bypass -File widget.ps1 -Width 520 -Side left -OnTop
 ```
 
-`install-shortcut.ps1` adds a desktop icon that launches with no console window. Add
-`-Startup` to also launch it at login, and `-Remove` to take both away.
+`install-shortcut.ps1` adds a desktop icon that launches with no console window, bound to
+**Ctrl+Alt+W** from anywhere. The hotkey lives on the shortcut itself, so nothing has to sit
+resident in the background — Windows dispatches it. Change it with `-Hotkey "CTRL+ALT+M"`,
+or pass `-Hotkey ""` for none. Add `-Startup` to also launch at login, `-Remove` to take it
+all away.
 
 It starts the server if needed, then opens Chrome (or Edge) in app mode — no tabs, no
 address bar — snapped to the screen edge at full height, in its own browser profile so it
