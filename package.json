@@ -1,0 +1,28 @@
+{
+  "name": "claude-agent-watch",
+  "version": "0.1.0",
+  "description": "See what your Claude Code sessions and subagents are doing right now. No hooks, no build, no dependencies.",
+  "type": "module",
+  "bin": {
+    "claude-agent-watch": "server/index.mjs"
+  },
+  "scripts": {
+    "start": "node server/index.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "observability",
+    "subagent",
+    "monitoring"
+  ],
+  "files": [
+    "server",
+    "public",
+    "README.md",
+    "LICENSE"
+  ]
+}

@@ -1,0 +1,472 @@
+/* 토큰 두 벌(라이트·다크)과, 그 두 벌에서 파생되는 것들.
+ *
+ * 유리·캔버스·경계선은 고정값으로 두지 않는다. 팔레트에서 파생시키면 테마를
+ * 하나 더 추가할 때 팔레트만 쓰면 되고, 배경만 라이트로 남는 사고가 안 난다. */
+:root {
+  --surface: #ffffff;
+  --sunken: #f8fafd;
+  --raised: #f1f4fa;
+  --ink: #0b1220;
+  --ink2: #4a5468;
+  --ink3: #67718a;
+  --ink4: #98a2b8;
+  --line: #e4e9f2;
+  --line-strong: #d8e0ef;
+  --accent: #2563eb;
+  --info: #0ea5e9;
+  --success: #12b76a;
+  --danger: #c92a2a;
+
+  --shadow-rest: 0 1px 2px rgba(11, 18, 32, 0.04);
+  --shadow-run: 0 0 0 4px rgba(18, 183, 106, 0.1), 0 12px 30px rgba(18, 183, 106, 0.18);
+  --shadow-dot: 0 0 0 4px rgba(18, 183, 106, 0.16), 0 0 14px rgba(18, 183, 106, 0.8);
+
+  --radius-card: 16px;
+  --radius-inner: 12px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+:root[data-theme='dark'] {
+  --surface: #13171f;
+  --sunken: #101520;
+  --raised: #1b212c;
+  --ink: #eef2f9;
+  --ink2: #a6b0c4;
+  --ink3: #8f99ad;
+  --ink4: #6b7588;
+  --line: #232a37;
+  --line-strong: #2e3746;
+  --accent: #2563eb;
+  --info: #0ea5e9;
+  --success: #12b76a;
+  --danger: #ff8787;
+
+  /* 밝은 테마의 검정 알파 그림자는 어두운 배경에서 안 보여 카드가 배경에
+   * 붙어 버린다. 더 짙게 깐다. */
+  --shadow-rest: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-run: 0 0 0 4px rgba(18, 183, 106, 0.14), 0 12px 30px rgba(18, 183, 106, 0.22);
+}
+
+:root {
+  /* 유리 위 경계선. 글자색에서 뽑으면 밝은 테마에선 어두운 선, 어두운
+   * 테마에선 밝은 선으로 저절로 뒤집힌다. */
+  --hairline: color-mix(in srgb, var(--ink) 11%, transparent);
+  --glass: color-mix(in srgb, var(--surface) 78%, transparent);
+  /* 글자로 읽히는 accent. 팔레트의 accent를 그대로 글자에 쓰면 어떤 테마에선
+   * 배경과 붙는다. 그 테마의 글자색 쪽으로 당겨 둔다. */
+  --accent-text: color-mix(in srgb, var(--accent) 72%, var(--ink));
+  --success-text: color-mix(in srgb, var(--success) 78%, var(--ink));
+  --canvas: radial-gradient(1100px 520px at 8% -10%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 68%),
+    radial-gradient(820px 460px at 96% 0%, color-mix(in srgb, var(--info) 15%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--sunken) 0%, var(--raised) 100%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'Instrument Sans', 'IBM Plex Sans KR', system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  /* 캔버스는 스크롤과 함께 흐르지 않는다. 위쪽 발광이 화면에 남아야
+   * 배경이 아니라 유리로 읽힌다. */
+  background: var(--canvas);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+}
+
+.mono {
+  font-family: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 헤더 ─────────────────────────────────────────────── */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 56px;
+  padding: 0 20px;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--hairline);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.spacer {
+  margin-left: auto;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  flex: none;
+}
+.dot.on {
+  background: var(--success);
+  box-shadow: var(--shadow-dot);
+}
+.dot.off {
+  background: var(--danger);
+}
+.dot.idle {
+  background: var(--line-strong);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink2);
+  padding: 6px 10px;
+  transition: transform 160ms var(--ease-out), border-color 160ms var(--ease-out);
+}
+button:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+/* 누를 수 있는 것은 눌린 티가 나야 한다. */
+button:active {
+  transform: scale(0.97);
+}
+
+/* ── 본문 ─────────────────────────────────────────────── */
+main {
+  padding: 16px 20px 40px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  border: 1px solid;
+}
+.pill.live {
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  border-color: color-mix(in srgb, var(--success) 32%, transparent);
+  color: var(--success-text);
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--ink4);
+  font-weight: 400;
+}
+
+/* 카드가 셋까지 나란히. 그보다 좁아지면 타임라인이 읽히지 않아 접는다. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-rest);
+}
+.card.live {
+  border-color: color-mix(in srgb, var(--success) 42%, transparent);
+  box-shadow: var(--shadow-run);
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.project {
+  font-size: 13px;
+  font-weight: 600;
+  flex: none;
+}
+.sep {
+  color: var(--ink4);
+  font-size: 11px;
+  flex: none;
+}
+.title {
+  font-size: 13px;
+  color: var(--ink2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+}
+.status.run {
+  color: var(--success-text);
+}
+.status.idle {
+  color: var(--ink4);
+}
+
+.request {
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  color: var(--ink2);
+  word-break: keep-all;
+}
+.request .tag {
+  font-size: 10px;
+  color: var(--ink4);
+  margin-right: 6px;
+}
+
+.agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--success) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 20%, transparent);
+}
+.agent .name {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent .meta {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  color: var(--ink4);
+}
+
+/* 에이전트가 한 말. 이 카드에서 가장 크게 읽혀야 하는 것이다.
+ * 툴 명령줄은 기계의 사정이지만 이건 상황을 말해 준다. */
+.say {
+  font-size: 13px;
+  line-height: 1.65;
+  word-break: keep-all;
+  white-space: pre-wrap;
+}
+.say.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.say-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--ink4);
+}
+.more {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent-text);
+  font-size: 11px;
+  text-decoration: underline;
+}
+.more:hover {
+  border-color: transparent;
+}
+
+.busy {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+}
+.tool {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success-text);
+}
+.busy .what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink3);
+}
+.busy .elapsed {
+  margin-left: auto;
+  flex: none;
+  color: var(--success-text);
+}
+.busy.none {
+  color: var(--ink4);
+}
+
+/* ── 계획 진행률 ──────────────────────────────────────── */
+/* 세션 카드 안에 둔다. 화면 맨 위에 하나만 두었더니 어느 세션 것인지
+ * 알 수가 없었다. 계획은 프로젝트에 딸린 것이고 프로젝트는 세션마다 다르다. */
+.plan {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.plan-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ink3);
+  margin-bottom: 6px;
+}
+.plan-head .count {
+  font-weight: 700;
+  color: var(--accent-text);
+}
+.plan-head .file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink4);
+}
+.bars {
+  display: flex;
+  gap: 2px;
+}
+.bars i {
+  height: 6px;
+  flex: 1;
+  border-radius: 2px;
+  background: var(--line);
+}
+.bars i.done {
+  background: var(--success);
+}
+.bars i.running {
+  background: #f59e0b;
+}
+.tasks {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.task {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.task .mark {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  color: var(--ink4);
+}
+.task.done .mark {
+  color: var(--success-text);
+}
+.task.running .mark {
+  color: #b45309;
+}
+.task .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task.todo .label {
+  color: var(--ink4);
+}
+.task .dur {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  color: var(--ink4);
+}
+
+/* ── 쉬고 있는 세션 ───────────────────────────────────── */
+.idle-list {
+  margin-top: 20px;
+}
+.idle-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.idle-row .project {
+  font-weight: 500;
+  color: var(--ink2);
+}
+.idle-row .title {
+  color: var(--ink3);
+}
+.idle-row .when {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--ink4);
+}
+
+.empty {
+  padding: 12px 14px;
+  border-radius: var(--radius-inner);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink3);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:active {
+    transform: none;
+  }
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>claude-agent-watch</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🛰️</text></svg>" />
+    <!-- 서체는 있으면 쓰고 없으면 시스템 폰트로 떨어진다. 오프라인에서도
+         화면이 깨지지 않게 필수로 두지 않는다. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+KR:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header>
+      <span>🛰️</span>
+      <h1>에이전트 관측</h1>
+      <span class="dot on" id="conn-dot"></span>
+      <span id="conn-text" style="font-size: 13px; color: var(--ink2)">연결됨</span>
+      <span class="spacer"></span>
+      <button id="theme-btn" title="테마 전환">🌙</button>
+    </header>
+
+    <main>
+      <div class="section-title">
+        <span>지금 돌고 있는 세션</span>
+        <span class="pill live" id="live-count" hidden></span>
+        <span class="hint">트랜스크립트를 직접 읽는다. 훅도 재시작도 필요 없다</span>
+      </div>
+      <div id="live"></div>
+      <div id="idle" class="idle-list"></div>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

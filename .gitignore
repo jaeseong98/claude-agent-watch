@@ -1,0 +1,11 @@
+# 실행 로그. Start-Process로 띄울 때 생긴다.
+out.log
+err.log
+*.log
+
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
