@@ -60,7 +60,7 @@ Below the timeline, one card per live session:
   block with no reason came back through another path.
   15:08:15                                           show all
 
-  FAILED ×3   15:04:22  Bash
+  SAME ERROR ×4   6m   Bash
   Exit code 2 ./.ruff_cache ./.venv/Lib/site-packages/ruff …
 
   Bash  python -m pytest tests/ -q                          2m
@@ -82,14 +82,31 @@ notifies you at exactly two moments:
 | | When |
 |---|---|
 | **Your turn** | it was holding a tool, let go, and is now waiting on you |
-| **Blocked** | a new tool failure appeared |
+| **Stuck** | the same error keeps repeating |
 
 Nothing else fires. An alert that goes off constantly stops being a signal.
 
-Failures matter as much as completion: a session grinding on the same error for thirty
-minutes and a session making steady progress look **identical** otherwise. Blocked is
-checked before your-turn, because reporting a session that died on an error as "finished"
-would be a lie.
+### Failures are not events, they are a pattern
+
+The first version showed every tool failure. That was wrong.
+
+Most tool failures are **the agent's normal working rhythm**, not incidents.
+`String to replace not found` means read the file again. `File has been modified since
+read` means the same. `ruff` exiting 1 is what running a linter is *for*. The agent looks
+at the error and carries on — and a red box announcing a problem it already solved is pure
+noise. In testing, a failure from 13:57 was still sitting on screen at 15:41.
+
+The useful signal is not *"a failure happened"*, it is **"it isn't getting anywhere"**.
+So nothing is shown until:
+
+- the **same error repeats 3+ times** within 10 minutes (paths and line numbers are
+  stripped before comparing, so hitting one wall over and over is recognised), or
+- **6+ errors** land in 10 minutes at all
+
+Otherwise the card stays quiet, because there is nothing you need to do.
+
+Stuck is checked before your-turn, because reporting a session that ground to a halt on an
+error as "finished" would be a lie.
 
 ---
 

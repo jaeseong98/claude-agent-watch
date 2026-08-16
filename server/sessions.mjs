@@ -362,6 +362,65 @@ function readSubagents(sessionDir, now) {
   return { agentCount: files.length, liveAgents, items, failures, usage, pending };
 }
 
+// 막혔는가.
+//
+// 처음에는 실패를 그냥 다 보여줬는데 잘못이었다. 도구 실패 대부분은 사고가
+// 아니라 에이전트의 정상적인 작업 리듬이다. "String to replace not found"는
+// 다시 읽고 고치면 되고, "File has been modified"도, ruff의 exit code 1도
+// 마찬가지다. 에이전트는 보고 넘어간다. 그걸 빨간 박스로 띄우면 두 시간 전에
+// 이미 해결된 일이 화면에 남아 소음이 된다(실측: 13:57 실패가 15:41까지 남음).
+//
+// 쓸모 있는 신호는 "실패가 났다"가 아니라 "나아가지 못하고 있다"이다.
+// 같은 오류가 반복되는 것이 그 신호다.
+const STUCK_WINDOW_MS = 10 * 60 * 1000;
+const STUCK_SAME = 3; // 같은 오류가 이만큼 반복되면 헛돌고 있는 것
+const STUCK_ANY = 6; // 서로 다른 오류라도 이만큼 쏟아지면 뭔가 잘못된 것
+
+// 숫자와 경로를 지워 같은 오류인지 본다. 줄 번호나 파일명만 다른 것은
+// 같은 벽에 계속 부딪히는 것이다.
+function normalizeError(m) {
+  return m
+    .replace(/[A-Za-z]:\\[^\s"']+|\/[^\s"']+/g, 'P')
+    .replace(/\d+/g, '#')
+    .slice(0, 120);
+}
+
+function detectStuck(failures, now) {
+  const recent = failures.filter((f) => f.kind === 'error' && now - f.ts < STUCK_WINDOW_MS);
+  if (recent.length < STUCK_SAME) return null;
+
+  const groups = new Map();
+  for (const f of recent) {
+    const k = normalizeError(f.message);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(f);
+  }
+  let worst = [];
+  for (const g of groups.values()) if (g.length > worst.length) worst = g;
+
+  if (worst.length >= STUCK_SAME) {
+    const last = worst[worst.length - 1];
+    return {
+      reason: 'repeat',
+      count: worst.length,
+      since: worst[0].ts,
+      tool: last.tool,
+      message: last.message,
+    };
+  }
+  if (recent.length >= STUCK_ANY) {
+    const last = recent[recent.length - 1];
+    return {
+      reason: 'many',
+      count: recent.length,
+      since: recent[0].ts,
+      tool: last.tool,
+      message: last.message,
+    };
+  }
+  return null;
+}
+
 // 이 세션이 계획을 실제로 돌리고 있는가.
 //
 // 같은 프로젝트에 창을 여러 개 띄우면 cwd가 같아 계획이 전부에 붙는다.
@@ -460,11 +519,12 @@ export function getSessions() {
         lastPrompt: parsed.lastPrompt,
         lastNarration: narrations[narrations.length - 1] ?? null,
         busyWith,
-        // 최근 실패. 전부 주면 화면이 오류 목록이 되므로 마지막 몇 건만.
-        failures: [...parsed.failures, ...agents.failures]
-          .sort((a, b) => a.ts - b.ts)
-          .filter((f) => now - f.ts < HISTORY_MS)
-          .slice(-MAX_FAILURES),
+        // 개별 실패는 안 보낸다. 대부분 에이전트가 보고 넘어가는 정상적인
+        // 마찰이라 화면에 띄우면 소음이 된다. 헛돌고 있을 때만 신호를 준다.
+        stuck: detectStuck(
+          [...parsed.failures, ...agents.failures].sort((a, b) => a.ts - b.ts),
+          now
+        ),
         // 꼬리에 들어온 만큼의 토큰. since가 언제부터인지 말해 준다.
         usage: {
           input: parsed.usage.input + agents.usage.input,

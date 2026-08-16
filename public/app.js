@@ -286,17 +286,22 @@ function renderCard(s) {
     card.append(foot);
   }
 
-  // 실패. 있으면 눈에 띄어야 한다. 같은 오류로 헛도는 세션과 순조로운
-  // 세션이 똑같이 보이면 화면을 보는 의미가 없다.
-  if (s.failures?.length) {
+  // 막힘. 실패 하나하나가 아니라 "나아가지 못하고 있다"일 때만 뜬다.
+  // 도구 실패 대부분은 에이전트가 보고 넘어가는 정상적인 마찰이다.
+  if (s.stuck) {
     const box = el('div', 'fails');
-    const last = s.failures[s.failures.length - 1];
     const head = el('div', 'fail-head');
-    head.append(el('span', 'fail-badge', s.failures.length > 1 ? `실패 ${s.failures.length}` : '실패'));
-    head.append(el('span', 'mono', hhmmss(last.ts)));
-    if (last.tool) head.append(el('span', 'mono', last.tool));
+    head.append(
+      el(
+        'span',
+        'fail-badge',
+        s.stuck.reason === 'repeat' ? `같은 오류 ${s.stuck.count}회` : `오류 ${s.stuck.count}회`
+      )
+    );
+    head.append(el('span', 'mono', `${dur(now - s.stuck.since)}째`));
+    if (s.stuck.tool) head.append(el('span', 'mono', s.stuck.tool));
     box.append(head);
-    box.append(el('div', 'fail-msg', last.message));
+    box.append(el('div', 'fail-msg', s.stuck.message));
     card.append(box);
   }
 
@@ -439,19 +444,22 @@ function checkTransitions(data) {
   for (const s of data.sessions) {
     const was = prev.get(s.sessionId);
     const busy = Boolean(s.busyWith);
-    const lastFailTs = s.failures?.length ? s.failures[s.failures.length - 1].ts : 0;
+    // 막힘으로 "들어선 순간"에만 부른다. 막힌 동안 4초마다 울리면 안 된다.
+    const stuckSince = s.stuck ? s.stuck.since : 0;
     const name = `${s.project}${s.title ? ` › ${s.title}` : ''}`;
 
     if (primed && was) {
-      // 막힘이 먼저다. 실패로 멈춘 것을 "끝났다"로 알리면 거짓말이 된다.
-      if (lastFailTs > was.lastFailTs) {
-        const f = s.failures[s.failures.length - 1];
-        notify(`막힘 · ${name}`, `${f.tool ? f.tool + ': ' : ''}${f.message}`.slice(0, 180));
+      // 막힘이 먼저다. 오류로 멈춘 것을 "끝났다"로 알리면 거짓말이 된다.
+      if (stuckSince && stuckSince !== was.stuckSince) {
+        notify(
+          `막힘 · ${name}`,
+          `${s.stuck.tool ? s.stuck.tool + ': ' : ''}${s.stuck.message}`.slice(0, 180)
+        );
       } else if (was.busy && !busy && !s.live) {
         notify(`차례 · ${name}`, s.lastNarration?.detail?.slice(0, 180) ?? '작업이 멈췄다.');
       }
     }
-    prev.set(s.sessionId, { busy, lastFailTs });
+    prev.set(s.sessionId, { busy, stuckSince });
   }
   primed = true;
 }
