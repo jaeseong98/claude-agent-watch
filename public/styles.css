@@ -583,10 +583,34 @@ main {
 .bars i.running {
   background: #f59e0b;
 }
+/* 시작만 되고 보고서가 없는 것. 진행 중(주황)과 달라야 한다. 빗금으로
+   "여기서 멈췄다"를 나타낸다. */
+.bars i.abandoned {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--line-strong),
+    var(--line-strong) 3px,
+    var(--line) 3px,
+    var(--line) 6px
+  );
+}
+.task.abandoned .mark {
+  color: var(--ink4);
+}
+.task.abandoned .label {
+  color: var(--ink3);
+}
 /* 끝난 계획. 막대를 가라앉혀 진행 중인 것과 구분한다. 정보로는 남기되
    눈이 먼저 가지는 않게 한다. */
 .plan.done .bars i.done {
   background: color-mix(in srgb, var(--success) 42%, var(--surface));
+}
+.plan-unknown {
+  padding: 0 6px;
+  border-radius: 99px;
+  background: color-mix(in srgb, #f59e0b 14%, transparent);
+  color: color-mix(in srgb, #f59e0b 70%, var(--ink));
+  font-weight: 600;
 }
 .plan-done {
   padding: 0 6px;

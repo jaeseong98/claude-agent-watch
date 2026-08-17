@@ -114,7 +114,13 @@ const server = createServer(async (req, res) => {
   }
   try {
     const data = await readFile(target);
-    res.writeHead(200, { 'Content-Type': MIME[extname(target)] ?? 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': MIME[extname(target)] ?? 'application/octet-stream',
+      // 캐시하지 않는다. 파일을 고쳐도 브라우저가 옛 app.js를 계속 쓰는 바람에
+      // 고친 것이 화면에 안 나타나는 일이 있었다. 로컬에서 파일 몇 개를
+      // 읽는 것이라 캐시로 아낄 것도 없다.
+      'Cache-Control': 'no-store',
+    });
     res.end(data);
   } catch {
     res.writeHead(404).end('not found');

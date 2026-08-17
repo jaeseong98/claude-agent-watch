@@ -56,9 +56,16 @@ function renderPlan(plan, sessionId) {
   const head = el('div', 'plan-head');
   head.append(el('span', null, '계획'));
   head.append(el('span', 'count', `${plan.done}/${plan.total}`));
+  // 보고서가 없어 완료를 확인할 수 없는 것들. 이게 있으면 분수만 보여선
+  // 안 된다. "0/7"은 아무것도 안 됐다는 뜻으로 읽히는데, 실제로는 도구가
+  // 모를 뿐이고 커밋은 되어 있을 수 있다.
+  const unknown = plan.tasks.filter((t) => t.status === 'abandoned').length;
+
   if (done) {
     head.append(el('span', 'plan-done', '완료'));
     if (plan.completedAt) head.append(el('span', null, `${ago(plan.completedAt)}`));
+  } else if (unknown) {
+    head.append(el('span', 'plan-unknown', `확인 불가 ${unknown}`));
   } else if (plan.etaMs !== null) {
     head.append(el('span', null, `평균 ${dur(plan.avgMs)} · 남은 ${plan.total - plan.done}개 ≈ ${dur(plan.etaMs)}`));
   }
@@ -76,28 +83,44 @@ function renderPlan(plan, sessionId) {
   const bars = el('div', 'bars');
   for (const t of plan.tasks) {
     const b = el('i', t.status === 'todo' ? '' : t.status);
-    b.title = `${t.n}. ${t.title}`;
+    b.title =
+      `${t.n}. ${t.title}` + (t.status === 'abandoned' ? ' (시작만 되고 보고서가 없다)' : '');
     bars.append(b);
   }
   box.append(bars);
 
   // 접었을 때는 진행 중인 것만, 펼치면 전부. 11개를 늘 늘어놓으면 카드가
   // 계획표가 되어 정작 지금 벌어지는 일이 밀려난다.
-  const shown = open ? plan.tasks : plan.tasks.filter((t) => t.status === 'running');
+  const shown = open
+    ? plan.tasks
+    : plan.tasks.filter((t) => t.status === 'running' || t.status === 'abandoned');
   if (shown.length) {
     const list = el('div', 'tasks');
     for (const t of shown) {
       const row = el('div', `task ${t.status}`);
-      row.append(el('span', 'mark', t.status === 'done' ? '✓' : t.status === 'running' ? '▸' : '·'));
+      const mark = { done: '✓', running: '▸', abandoned: '⚠' }[t.status] ?? '·';
+      row.append(el('span', 'mark', mark));
       row.append(el('span', 'label', `${t.n}. ${t.title}`));
       if (t.status === 'done' && t.briefAt && t.reportAt) {
         row.append(el('span', 'dur mono', dur(t.reportAt - t.briefAt)));
       } else if (t.status === 'running' && t.briefAt) {
         row.append(el('span', 'dur mono', `${dur(now - t.briefAt)}째`));
+      } else if (t.status === 'abandoned') {
+        // 몇 시간째 진행 중이라고 하면 거짓말이다. 시작만 됐다고 말한다.
+        row.append(el('span', 'dur mono', '보고서 없음'));
       }
       list.append(row);
     }
     box.append(list);
+  }
+  if (unknown) {
+    box.append(
+      el(
+        'div',
+        'hint',
+        `${unknown}개는 보고서(task-N-report.md)가 없어 완료를 확인할 수 없다. 커밋은 되어 있을 수 있다.`
+      )
+    );
   }
   if (open && plan.staleCount) {
     box.append(

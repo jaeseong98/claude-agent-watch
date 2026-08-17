@@ -11,6 +11,10 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
+// 브리프가 이보다 오래됐는데 보고서가 없으면 진행 중이 아니다. 실측으로
+// 태스크 하나는 9~39분이 걸렸다. 넉넉히 잡아도 세 시간이면 충분하다.
+const RUNNING_MAX_MS = 3 * 60 * 60 * 1000;
+
 function statSafe(p) {
   try {
     return statSync(p);
@@ -69,7 +73,22 @@ export function getPlanProgress(projectRoot) {
     t.briefAt = brief && brief.mtimeMs >= baseline ? brief.mtimeMs : null;
     t.reportAt = report && report.mtimeMs >= baseline ? report.mtimeMs : null;
     if ((brief && !t.briefAt) || (report && !t.reportAt)) staleCount++;
-    t.status = t.reportAt ? 'done' : t.briefAt ? 'running' : 'todo';
+    t.status = t.reportAt ? 'done' : t.briefAt ? 'started' : 'todo';
+  }
+
+  // 브리프만 있고 보고서가 없는 것을 전부 "진행 중"으로 보면 안 된다.
+  // 실측으로 16시간째 진행 중인 태스크 다섯 개가 한꺼번에 떴는데, 실제로는
+  // 어젯밤에 시작만 되고 보고서가 안 남은 것들이었다. 태스크 하나는 9~39분이
+  // 걸렸으니 16시간짜리 진행 중은 있을 수 없다.
+  //
+  // SDD는 순차 실행이다. 그러니 브리프가 가장 늦게 생긴 것 하나만 지금 돌고
+  // 있을 수 있고, 그보다 앞선 것들은 이미 끝났거나 버려진 것이다.
+  const startedTasks = tasks.filter((t) => t.status === 'started');
+  const latestStarted = startedTasks.reduce((a, b) => (!a || b.briefAt > a.briefAt ? b : a), null);
+  for (const t of startedTasks) {
+    // 가장 최근 브리프이면서 아직 그럴듯한 시간 안에 있어야 진행 중이다.
+    // 아니면 '시작만 되고 보고서가 없음'이다. 그것도 알아야 할 정보다.
+    t.status = t === latestStarted && Date.now() - t.briefAt < RUNNING_MAX_MS ? 'running' : 'abandoned';
   }
 
   const done = tasks.filter((t) => t.status === 'done').length;
